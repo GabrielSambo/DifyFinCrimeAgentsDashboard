@@ -12,8 +12,8 @@ export const maxDuration = 60;
   Returns the PEP app's structured result: { results, summary, highlight, source }.
 */
 
-const BASE = process.env.DIFY_API_BASE ?? "";
-const PEP_KEY = process.env.DIFY_PEP_APP_KEY ?? "";
+const BASE = process.env.DIFY_API_BASE?.trim() ?? "";
+const PEP_KEY = process.env.DIFY_PEP_APP_KEY?.trim() ?? "";
 
 interface Body {
   name?: string;

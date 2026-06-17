@@ -5,12 +5,12 @@
 
 import "server-only";
 
-const BASE = process.env.DIFY_API_BASE ?? "";
+const BASE = process.env.DIFY_API_BASE?.trim() ?? "";
 
 export type DifyAgent = "ubo" | "kyc";
 
 function keyFor(agent: DifyAgent): string {
-  const key = agent === "ubo" ? process.env.DIFY_UBO_APP_KEY : process.env.DIFY_KYC_APP_KEY;
+  const key = (agent === "ubo" ? process.env.DIFY_UBO_APP_KEY : process.env.DIFY_KYC_APP_KEY)?.trim();
   if (!key) throw new Error(`Missing Dify app key for agent "${agent}"`);
   return key;
 }

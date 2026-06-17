@@ -19,8 +19,8 @@ export const maxDuration = 60;
   Returns: { ok: boolean, result?, reason?, note? }
 */
 
-const BASE = process.env.DIFY_API_BASE ?? "";
-const RFI_KEY = process.env.DIFY_RFI_APP_KEY;
+const BASE = process.env.DIFY_API_BASE?.trim() ?? "";
+const RFI_KEY = process.env.DIFY_RFI_APP_KEY?.trim();
 
 interface Body {
   clientId?: string;

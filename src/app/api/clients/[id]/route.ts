@@ -13,8 +13,8 @@ export const dynamic = "force-dynamic";
   cdd, PATCH the full data. Service key is server-only; never exposed to the browser.
 */
 
-const URL = process.env.SUPABASE_URL?.replace(/\/$/, "");
-const KEY = process.env.SUPABASE_SERVICE_KEY;
+const URL = process.env.SUPABASE_URL?.trim().replace(/\/$/, "");
+const KEY = process.env.SUPABASE_SERVICE_KEY?.trim();
 const HISTORY_CAP = 20;
 
 function headers() {

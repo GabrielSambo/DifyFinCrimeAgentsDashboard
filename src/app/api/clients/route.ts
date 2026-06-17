@@ -68,8 +68,8 @@ function mapRow(row: SupabaseRow, docRows: Documents2Row[] = []): Client {
 }
 
 export async function GET() {
-  const base = process.env.SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_KEY;
+  const base = process.env.SUPABASE_URL?.trim();
+  const key = process.env.SUPABASE_SERVICE_KEY?.trim();
 
   if (!base || !key) {
     const body: ClientsResponse = {
