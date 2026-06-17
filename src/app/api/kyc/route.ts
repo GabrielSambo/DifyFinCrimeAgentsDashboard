@@ -2,6 +2,8 @@ import { streamChat, DifyError } from "@/lib/dify";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+// KYC replies stream from an LLM (first token up to ~30s); raise above Vercel's short default.
+export const maxDuration = 60;
 
 /*
   POST /api/kyc  — proxy to the live "Agente1-FIN V1" KYC onboarding agent.

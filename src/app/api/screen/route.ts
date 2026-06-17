@@ -1,5 +1,7 @@
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+// PEP/sanctions screening calls the agent backend; raise above Vercel's short default.
+export const maxDuration = 60;
 
 /*
   POST /api/screen — screen one or more names against the standalone PEP Screening App

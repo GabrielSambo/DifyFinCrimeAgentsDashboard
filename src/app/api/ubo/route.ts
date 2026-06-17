@@ -6,6 +6,8 @@ import { normalizeUboPayload } from "@/lib/ubo-normalize";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+// UBO investigations stream for ~20-35s; raise above Vercel's short default so they don't time out.
+export const maxDuration = 60;
 
 /*
   POST /api/ubo

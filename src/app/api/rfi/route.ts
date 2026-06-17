@@ -1,5 +1,7 @@
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+// Agent 2 (RFI workflow) generates + sends the email; raise above Vercel's short default.
+export const maxDuration = 60;
 
 /*
   POST /api/rfi — fire a document request (RFI) via Agent 2 (RFI Generator, Dify mode: workflow).
