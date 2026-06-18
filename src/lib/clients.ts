@@ -13,12 +13,19 @@ import type { DocStatus } from "@/lib/documents";
 
 export type RiskStatus = "alert" | "review" | "cleared" | "pending";
 export type ClientKind = "PF" | "PJ";
+/** Lifecycle axis: "new" = mid-onboarding (Onboarding view); "existing" = already a client (Remediation view). */
+export type ClientType = "existing" | "new";
 
 export interface Client {
   client_id: string;
   full_name: string;
   /** "PF" (natural person) | "PJ" (legal entity) — from onboarding. */
   profile: ClientKind | string;
+  /**
+   * "new" (being onboarded) vs "existing" (already a client → can be remediated). Derived in /api/clients
+   * from an explicit `client_type` column → `data.client_type` jsonb → onboarding state (risk/data) fallback.
+   */
+  client_type: ClientType;
   /** Free-form KYC template fields captured at onboarding (Supabase `data` jsonb). */
   data?: Record<string, string | null> | null;
   jurisdiction?: string | null;
@@ -61,6 +68,7 @@ export const DEMO_CLIENTS: Client[] = [
     client_id: "PEPTEST-001",
     full_name: "Vladimir Putin",
     profile: "PF",
+    client_type: "existing",
     jurisdiction: "Russia",
     created_at: "2026-06-16",
     risk: "alert",
@@ -73,6 +81,7 @@ export const DEMO_CLIENTS: Client[] = [
     client_id: "ALDI-UK-014",
     full_name: "ALDI STORES LIMITED",
     profile: "PJ",
+    client_type: "existing",
     jurisdiction: "United Kingdom",
     created_at: "2026-05-29",
     risk: "review",
@@ -85,6 +94,7 @@ export const DEMO_CLIENTS: Client[] = [
     client_id: "BREWDOG-007",
     full_name: "BREWDOG PLC",
     profile: "PJ",
+    client_type: "existing",
     jurisdiction: "United Kingdom",
     created_at: "2026-05-21",
     risk: "review",
@@ -106,6 +116,7 @@ export const DEMO_CLIENTS: Client[] = [
     client_id: "CLEANTEST-002",
     full_name: "Margaret Wellington Brightwater",
     profile: "PF",
+    client_type: "existing",
     jurisdiction: "United Kingdom",
     created_at: "2026-06-16",
     risk: "cleared",
@@ -118,6 +129,7 @@ export const DEMO_CLIENTS: Client[] = [
     client_id: "ACME-001",
     full_name: "Acme Trading Ltd",
     profile: "PJ",
+    client_type: "existing",
     jurisdiction: "Ireland",
     created_at: "2026-06-15",
     risk: "cleared",
@@ -142,6 +154,7 @@ export const DEMO_CLIENTS: Client[] = [
     client_id: "PESCA-UK-031",
     full_name: "PESCA UK LIMITED",
     profile: "PJ",
+    client_type: "new",
     jurisdiction: "United Kingdom",
     created_at: "2026-06-02",
     risk: "pending",

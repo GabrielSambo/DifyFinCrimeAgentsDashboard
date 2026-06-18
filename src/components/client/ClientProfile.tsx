@@ -8,6 +8,7 @@ import { SectionCard, Stat, Spinner } from "@/components/ui/atoms";
 import { persistCdd } from "@/lib/persist-client";
 import { formatDate } from "@/lib/format";
 import { reviewStatus } from "@/lib/review";
+import { docExpiry, EXPIRY_DAYS } from "@/lib/documents";
 
 function RiskHeader({ client }: { client: Client }) {
   const status = client.cdd?.risk_status ?? client.risk;
@@ -91,6 +92,76 @@ function ReviewCadenceCard({ client }: { client: Client }) {
   );
 }
 
+/*
+  Document expiry — the single remediation rule agreed in the 2026-06-06 daily. A *validated* document
+  lapses after EXPIRY_DAYS (180) and must be re-collected. Distinct from review cadence (how often we
+  re-screen the client): this is per-document staleness. Pure front-end/DB math, no agent. Renders a
+  healthy green state (with the next upcoming expiry date) so it's always informative — turning amber the
+  moment a real document crosses the window.
+*/
+function DocumentExpiryCard({ client }: { client: Client }) {
+  const items = client.docStatus?.items ?? [];
+  const ex = docExpiry(items);
+
+  const subtitle = `Validated documents lapse after ${EXPIRY_DAYS} days and must be re-collected`;
+
+  if (!ex.tracked) {
+    return (
+      <SectionCard title="Document expiry" subtitle={subtitle}>
+        <p className="text-sm text-ink-3">
+          No validated documents to track yet — expiry starts counting once a document is validated.
+        </p>
+      </SectionCard>
+    );
+  }
+
+  return (
+    <SectionCard title="Document expiry" subtitle={subtitle}>
+      <div
+        className={`flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium ${
+          ex.allCurrent ? "bg-good-bg text-good" : "bg-warn-bg text-warn"
+        }`}
+      >
+        {ex.allCurrent ? (
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" className="shrink-0">
+            <path d="M20 6 9 17l-5-5" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        ) : (
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" className="shrink-0">
+            <path d="M10.3 3.9 1.8 18a2 2 0 001.7 3h17a2 2 0 001.7-3L13.7 3.9a2 2 0 00-3.4 0z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
+            <path d="M12 9v4M12 17h.01" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+          </svg>
+        )}
+        <span>
+          {ex.allCurrent
+            ? `All ${ex.items.length} validated document(s) current${
+                ex.next ? ` · next expires ${formatDate(ex.next.expiresOn)} (in ${ex.next.daysLeft}d)` : ""
+              }`
+            : `${ex.expired.length} of ${ex.items.length} document(s) expired — re-request needed`}
+        </span>
+      </div>
+
+      <ul className="mt-3 divide-y divide-border">
+        {ex.items.map((d) => (
+          <li key={d.code} className="flex items-center justify-between gap-3 py-2">
+            <div className="min-w-0">
+              <div className="truncate text-sm text-ink">{d.label}</div>
+              <div className="text-xs text-ink-3">Validated {formatDate(d.validatedAt)}</div>
+            </div>
+            <span
+              className={`shrink-0 rounded-full px-2.5 py-0.5 text-xs font-medium ${
+                d.expired ? "bg-warn-bg text-warn" : "bg-good-bg text-good"
+              }`}
+            >
+              {d.expired ? `Expired ${Math.abs(d.daysLeft)}d ago` : `Valid · ${d.daysLeft}d left`}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </SectionCard>
+  );
+}
+
 function IdentityCard({ client }: { client: Client }) {
   const entries = Object.entries(client.data ?? {}).filter(
     ([k, v]) => k !== "cdd" && typeof v === "string" && (v as string).trim(),
@@ -133,8 +204,18 @@ function ScreeningCard({ client }: { client: Client }) {
         <Stat label="Sanctions" value={s.sanctions_hits ?? 0} tone={s.sanctions_hits ? "bad" : "good"} />
         <Stat label="Debarment" value={s.debarment_hits ?? 0} tone={s.debarment_hits ? "bad" : "good"} />
       </div>
-      <div className={`mt-3 rounded-lg px-3 py-2 text-sm font-medium ${hits ? "bg-bad-bg text-bad" : "bg-good-bg text-good"}`}>
-        {hits ? `🚨 ${s.highest_risk || `${hits} risk topic(s) — escalate for EDD`}` : "✅ No screening hits"}
+      <div className={`mt-3 flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium ${hits ? "bg-bad-bg text-bad" : "bg-good-bg text-good"}`}>
+        {hits ? (
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" className="shrink-0">
+            <path d="M10.3 3.9 1.8 18a2 2 0 001.7 3h17a2 2 0 001.7-3L13.7 3.9a2 2 0 00-3.4 0z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
+            <path d="M12 9v4M12 17h.01" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+          </svg>
+        ) : (
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" className="shrink-0">
+            <path d="M20 6 9 17l-5-5" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        )}
+        <span>{hits ? (s.highest_risk || `${hits} risk topic(s) — escalate for EDD`) : "No screening hits"}</span>
       </div>
     </SectionCard>
   );
@@ -162,6 +243,8 @@ export function ClientProfile({
       </div>
 
       <ReviewCadenceCard client={client} />
+
+      <DocumentExpiryCard client={client} />
 
       {/* Ownership / due diligence */}
       <SectionCard

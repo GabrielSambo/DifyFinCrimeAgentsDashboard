@@ -75,7 +75,9 @@ export function RequestDocsModal({
             <h3 className="text-sm font-semibold tracking-tight text-ink">Request documents</h3>
             <p className="mt-0.5 text-xs text-ink-3">{client.full_name} · {client.client_id}</p>
           </div>
-          <button onClick={onClose} className="rounded-lg px-2 py-1 text-ink-3 hover:bg-surface-2 hover:text-ink">✕</button>
+          <button onClick={onClose} aria-label="Close" className="rounded-lg p-1.5 text-ink-3 hover:bg-surface-2 hover:text-ink">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M18 6 6 18M6 6l12 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" /></svg>
+          </button>
         </header>
 
         <div className="space-y-3 px-5 py-4">

@@ -27,10 +27,13 @@ function StatTile({ label, value, tone = "default" }: { label: string; value: nu
   );
 }
 
+type Segment = "all" | "new" | "existing";
+
 export function Dashboard({ onOpenClient }: { onOpenClient: (c: Client) => void }) {
   const [data, setData] = useState<ClientsResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [segment, setSegment] = useState<Segment>("all");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -52,6 +55,11 @@ export function Dashboard({ onOpenClient }: { onOpenClient: (c: Client) => void 
 
   const clients = [...(data?.clients ?? [])].sort((a, b) => riskRank(a.risk) - riskRank(b.risk));
   const count = (r: RiskStatus) => clients.filter((c) => c.risk === r).length;
+
+  // Lifecycle segmentation: new clients live in onboarding, existing in remediation (2026-06-06 daily).
+  const nNew = clients.filter((c) => c.client_type === "new").length;
+  const nExisting = clients.filter((c) => c.client_type === "existing").length;
+  const visible = segment === "all" ? clients : clients.filter((c) => c.client_type === segment);
 
   // Document-lifecycle rollups for the second stats group.
   const docPending = clients.filter((c) => (c.docStatus?.outstanding.length ?? 0) > 0).length;
@@ -111,8 +119,25 @@ export function Dashboard({ onOpenClient }: { onOpenClient: (c: Client) => void 
         <div className="mt-3 rounded-lg bg-surface-2 px-3 py-2 text-xs text-ink-3">{data.note}</div>
       )}
 
+      {/* New / Existing segment — new clients are onboarding, existing ones are remediation candidates */}
+      <div className="mt-5 flex items-center gap-1 rounded-lg border border-border bg-surface p-1 w-fit text-xs font-medium">
+        {([
+          ["all", `All · ${clients.length}`],
+          ["new", `New · ${nNew}`],
+          ["existing", `Existing · ${nExisting}`],
+        ] as [Segment, string][]).map(([id, label]) => (
+          <button
+            key={id}
+            onClick={() => setSegment(id)}
+            className={`rounded-md px-3 py-1 transition-colors ${segment === id ? "bg-brand text-white" : "text-ink-3 hover:bg-surface-2"}`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
       {/* Client table */}
-      <div className="mt-5 overflow-hidden rounded-xl border border-border bg-surface">
+      <div className="mt-3 overflow-hidden rounded-xl border border-border bg-surface">
         <div className="grid grid-cols-[1.6fr_0.6fr_1.1fr_2.5rem_2.5rem_2.5rem_7rem] gap-3 border-b border-border bg-surface-2/50 px-5 py-2.5 text-[11px] font-medium uppercase tracking-wide text-ink-3">
           <div>Client</div>
           <div>Type</div>
@@ -129,10 +154,12 @@ export function Dashboard({ onOpenClient }: { onOpenClient: (c: Client) => void 
           </div>
         ) : error ? (
           <div className="px-5 py-8 text-sm text-bad">{error}</div>
-        ) : clients.length === 0 ? (
-          <div className="px-5 py-8 text-sm text-ink-3">No clients yet. Onboard a client to get started.</div>
+        ) : visible.length === 0 ? (
+          <div className="px-5 py-8 text-sm text-ink-3">
+            {segment === "all" ? "No clients yet. Onboard a client to get started." : `No ${segment} clients.`}
+          </div>
         ) : (
-          clients.map((c) => (
+          visible.map((c) => (
             <button
               key={c.client_id}
               onClick={() => onOpenClient(c)}

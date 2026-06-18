@@ -20,10 +20,17 @@ export const dynamic = "force-dynamic";
 
 const DEMO_BY_ID = new Map(DEMO_CLIENTS.map((c) => [c.client_id, c]));
 
+// The consolidated document-lifecycle table Agent 2 V9 writes and we read. The team has not finalized
+// `documents2` vs a renamed `documents`; keeping the name here (env-overridable) makes that switch a
+// one-line change — set DIFY_DOCS_TABLE=documents to repoint without touching any feature logic.
+const DOCS_TABLE = process.env.DIFY_DOCS_TABLE?.trim() || "documents2";
+
 interface SupabaseRow {
   client_id?: string;
   full_name?: string;
   profile?: string;
+  // Optional lifecycle column — present only if the team adds it to customers; we derive it otherwise.
+  client_type?: string | null;
   // `data` also holds the nested `missing_documents` map + the `cdd` enrichment, so it's wider than strings.
   data?: Record<string, unknown> | null;
   created_at?: string | null;
@@ -44,6 +51,15 @@ function mapRow(row: SupabaseRow, docRows: Documents2Row[] = []): Client {
 
   // Persisted enrichment is the source of truth; fall back to the demo seed, then a default.
   const risk: RiskStatus = (cdd?.risk_status as RiskStatus) ?? seed?.risk ?? (row.data ? "review" : "pending");
+
+  // Lifecycle axis (new vs existing): explicit column → data.client_type jsonb → derive from onboarding
+  // state. Graceful so the frontend works whether or not the DB ever gains a client_type column.
+  const explicitType = (row.client_type ?? (rawData?.client_type as string | undefined))?.toLowerCase();
+  const client_type: Client["client_type"] =
+    explicitType === "existing" || explicitType === "new"
+      ? explicitType
+      : seed?.client_type ?? (risk === "pending" || !row.data ? "new" : "existing");
+
   const screening_summary =
     cdd?.risk_summary ?? seed?.screening_summary ?? (data ? "Screening pending — run a remediation sweep" : "Onboarding in progress");
 
@@ -51,6 +67,7 @@ function mapRow(row: SupabaseRow, docRows: Documents2Row[] = []): Client {
     client_id: id,
     full_name: row.full_name || id,
     profile: normalizeProfile(row.profile),
+    client_type,
     data,
     cdd,
     jurisdiction:
@@ -91,11 +108,11 @@ export async function GET() {
     if (!res.ok) throw new Error(`Supabase ${res.status}`);
     const rows = (await res.json()) as SupabaseRow[];
 
-    // documents2 = the consolidated RFI status table (Agent 2 writes it). Group by client_id.
-    // Never fail the whole portfolio on a documents2 hiccup — fall back to the missing-docs map.
+    // DOCS_TABLE = the consolidated RFI status table (Agent 2 writes it). Group by client_id.
+    // Never fail the whole portfolio on a docs hiccup — fall back to the missing-docs map.
     const byClient = new Map<string, Documents2Row[]>();
     try {
-      const docRes = await fetch(`${base.replace(/\/$/, "")}/rest/v1/documents2?select=*`, {
+      const docRes = await fetch(`${base.replace(/\/$/, "")}/rest/v1/${DOCS_TABLE}?select=*`, {
         headers: { apikey: key, Authorization: `Bearer ${key}`, Accept: "application/json" },
         cache: "no-store",
       });

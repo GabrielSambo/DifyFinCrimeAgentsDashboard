@@ -16,6 +16,7 @@ function reviewAnchor(c: Client): string | null {
 }
 
 type ScreenState = { status: "idle" | "running" | "done" | "error"; result?: ScreenResult };
+type CheckState = { status: "idle" | "checking" | "done"; summary?: string };
 
 function hitCount(r?: ScreenResult): number {
   const s = r?.summary;
@@ -23,10 +24,24 @@ function hitCount(r?: ScreenResult): number {
   return (s.pep_hits || 0) + (s.sanctions_hits || 0) + (s.debarment_hits || 0);
 }
 
+/** Human one-liner of the documents2 state after a check: what's on file vs still missing. */
+function docCheckSummary(c: Client): string {
+  const ds = c.docStatus;
+  if (!ds || ds.source === "none") return "No document records on file";
+  if (ds.source === "missing_map") {
+    return ds.outstanding.length ? `${ds.outstanding.length} document(s) outstanding` : "All documents on file";
+  }
+  const items = ds.items;
+  const validated = items.filter((i) => i.validated).length;
+  const received = items.filter((i) => i.received).length;
+  return `${validated}/${ds.total} validated · ${received}/${ds.total} received · ${ds.outstanding.length} outstanding`;
+}
+
 export function Remediation() {
   const [clients, setClients] = useState<Client[]>([]);
   const [loading, setLoading] = useState(true);
   const [screens, setScreens] = useState<Record<string, ScreenState>>({});
+  const [checks, setChecks] = useState<Record<string, CheckState>>({});
   const [sweeping, setSweeping] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [modalClient, setModalClient] = useState<Client | null>(null);
@@ -44,8 +59,11 @@ export function Remediation() {
     try {
       const res = await fetch("/api/clients", { cache: "no-store" });
       const data = (await res.json()) as ClientsResponse;
+      // Remediation only applies to existing clients — a brand-new client mid-onboarding has nothing to
+      // remediate (2026-06-06 daily). New clients live in the Onboarding/KYC view instead.
+      const existing = data.clients.filter((c) => c.client_type === "existing");
       // Remediation queue: most documents outstanding first, then by risk.
-      const ordered = [...data.clients].sort(
+      const ordered = [...existing].sort(
         (a, b) =>
           (b.docStatus?.outstanding.length ?? 0) - (a.docStatus?.outstanding.length ?? 0) ||
           riskRank(a.risk) - riskRank(b.risk),
@@ -100,6 +118,27 @@ export function Remediation() {
     }
   }, []);
 
+  // Document check: re-read documents2 (the seeded store) for one client and update the board. This is a
+  // pure existence check — what the client already has on file vs what's still missing. NO email, NO upload,
+  // NO PEP/sanctions screening (that's rescreen). It trusts documents2.validated (seeded by Agent 2 / JC).
+  const checkDocs = useCallback(async (c: Client) => {
+    setChecks((s) => ({ ...s, [c.client_id]: { status: "checking" } }));
+    try {
+      const res = await fetch("/api/clients", { cache: "no-store" });
+      const data = (await res.json()) as ClientsResponse;
+      const fresh = data.clients.find((x) => x.client_id === c.client_id);
+      if (fresh) {
+        // Reflect the latest documents2 status on the queue row (lights / outstanding update live).
+        setClients((list) => list.map((x) => (x.client_id === c.client_id ? { ...x, docStatus: fresh.docStatus } : x)));
+        setChecks((s) => ({ ...s, [c.client_id]: { status: "done", summary: docCheckSummary(fresh) } }));
+      } else {
+        setChecks((s) => ({ ...s, [c.client_id]: { status: "done", summary: "Client no longer in portfolio" } }));
+      }
+    } catch {
+      setChecks((s) => ({ ...s, [c.client_id]: { status: "done", summary: "Check failed — could not read document records" } }));
+    }
+  }, []);
+
   const sweep = useCallback(async () => {
     setSweeping(true);
     // Sequential to be gentle on the OpenSanctions quota during a demo.
@@ -120,8 +159,10 @@ export function Remediation() {
           <h2 className="text-lg font-semibold tracking-tight text-ink">Remediation &amp; ongoing monitoring</h2>
           <p className="mt-0.5 max-w-2xl text-sm text-ink-3">
             Ongoing review of the existing book — chiefly <span className="font-medium text-ink-2">document remediation</span>.
-            Open a client to see which documents are still outstanding and request them. Re-screening against OpenSanctions
-            runs alongside, since sanctions/PEP lists change daily.
+            <span className="font-medium text-ink-2"> Check documents</span> re-reads what each client has on file vs. what&apos;s
+            still missing (no email, no upload); <span className="font-medium text-ink-2">Request documents</span> emails the client
+            for the gaps; <span className="font-medium text-ink-2">sanctions re-screening</span> runs alongside since PEP/sanctions
+            lists change daily.
           </p>
         </div>
         <button
@@ -165,6 +206,7 @@ export function Remediation() {
         ) : (
           clients.map((c) => {
             const st = screens[c.client_id];
+            const ck = checks[c.client_id];
             const hits = hitCount(st?.result);
             const outstanding = c.docStatus?.outstanding ?? [];
             const isOpen = expanded.has(c.client_id);
@@ -188,18 +230,45 @@ export function Remediation() {
                   </button>
 
                   <div className="flex items-center gap-3">
+                    {ck?.status === "done" && ck.summary && (
+                      <span className="inline-flex items-center gap-1.5 rounded-md border border-border bg-surface-2/60 px-2.5 py-1 text-xs font-medium text-ink-2" title="Documents on file (from documents2)">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" className="shrink-0 text-ink-3">
+                          <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
+                          <path d="M14 2v6h6M9 15l2 2 4-4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                        {ck.summary}
+                      </span>
+                    )}
                     {st?.status === "done" && st.result && (
                       hits > 0 ? (
                         <span className="inline-flex items-center gap-1.5 rounded-full bg-bad-bg px-2.5 py-1 text-xs font-medium text-bad">
-                          🚨 {st.result.summary?.highest_risk || `${hits} risk topic(s)`}
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" className="shrink-0">
+                            <path d="M10.3 3.9 1.8 18a2 2 0 001.7 3h17a2 2 0 001.7-3L13.7 3.9a2 2 0 00-3.4 0z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
+                            <path d="M12 9v4M12 17h.01" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                          </svg>
+                          {st.result.summary?.highest_risk || `${hits} risk topic(s)`}
                         </span>
                       ) : (
-                        <span className="inline-flex items-center rounded-full bg-good-bg px-2.5 py-1 text-xs font-medium text-good">✓ Still clear</span>
+                        <span className="inline-flex items-center gap-1.5 rounded-full bg-good-bg px-2.5 py-1 text-xs font-medium text-good">
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" className="shrink-0">
+                            <path d="M20 6 9 17l-5-5" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+                          </svg>
+                          Still clear
+                        </span>
                       )
                     )}
                     {st?.status === "error" && (
                       <span className="rounded-full bg-surface-2 px-2.5 py-1 text-xs text-ink-3">Screen failed</span>
                     )}
+                    <button
+                      onClick={() => void checkDocs(c)}
+                      disabled={ck?.status === "checking"}
+                      title="Re-read the document store: which requested documents are now on file vs still missing. No email, no screening."
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-border-strong bg-surface px-3 py-1.5 text-xs font-medium text-ink hover:bg-surface-2 disabled:opacity-50"
+                    >
+                      {ck?.status === "checking" ? <Spinner /> : null}
+                      {ck?.status === "checking" ? "Checking…" : "Check documents"}
+                    </button>
                     <button
                       onClick={() => setModalClient(c)}
                       disabled={outstanding.length === 0}
@@ -211,10 +280,11 @@ export function Remediation() {
                     <button
                       onClick={() => void rescreen(c)}
                       disabled={st?.status === "running"}
+                      title="Sanctions / PEP name screening (OpenSanctions) — separate from documents."
                       className="inline-flex items-center gap-1.5 rounded-lg border border-border-strong bg-surface px-3 py-1.5 text-xs font-medium text-ink hover:bg-surface-2 disabled:opacity-50"
                     >
                       {st?.status === "running" ? <Spinner /> : null}
-                      {st?.status === "running" ? "Screening…" : st ? "Re-screen" : "Re-screen now"}
+                      {st?.status === "running" ? "Screening…" : st ? "Re-screen sanctions" : "Screen sanctions"}
                     </button>
                   </div>
                 </div>
@@ -257,7 +327,7 @@ export function Remediation() {
           client={modalClient}
           outstanding={modalClient.docStatus?.outstanding ?? []}
           onClose={() => setModalClient(null)}
-          onSent={() => { /* sent — keep modal open to show the result; analyst closes it */ }}
+          onSent={() => { void checkDocs(modalClient); /* re-read documents2 so the board reflects the request */ }}
         />
       )}
     </div>
