@@ -1,7 +1,15 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { detectOptions, detectDocuments, type Option } from "@/lib/kyc-options";
+import {
+  detectOptions,
+  detectDocuments,
+  detectTemplate,
+  toDateInputValue,
+  fromDateInputValue,
+  type Option,
+  type TemplateField,
+} from "@/lib/kyc-options";
 
 interface Msg {
   role: "assistant" | "user";
@@ -9,6 +17,12 @@ interface Msg {
 }
 
 type Phase = "intro" | "form" | "chat";
+
+interface KnownInputs {
+  client_name?: string;
+  client_id?: string;
+  country?: string;
+}
 
 const GREETING =
   "I'm your KYC assistant. Tell me about a client — new or existing. I'll classify their profile, " +
@@ -39,6 +53,9 @@ export function KycChat({
   const [fName, setFName] = useState("");
   const [fId, setFId] = useState("");
   const [fCountry, setFCountry] = useState(COUNTRIES[0]);
+  // Intake values mirrored to state (the ref can't be read during render) so the
+  // template form can prefill name / country / ID the analyst already entered.
+  const [known, setKnown] = useState<KnownInputs | null>(null);
 
   const convId = useRef<string>("");
   // Intake values are RESENT on every turn — Dify doesn't reliably carry start
@@ -109,11 +126,13 @@ export function KycChat({
 
   function submitIntake() {
     if (!fName.trim()) return;
-    formInputs.current = {
+    const intake = {
       client_name: fName.trim(),
       client_id: fId.trim(),
       country: fCountry,
     };
+    formInputs.current = intake;
+    setKnown(intake);
     const parts = [`Client intake. Name: ${fName.trim()}`];
     if (fId.trim()) parts.push(`ID: ${fId.trim()}`);
     parts.push(`Country: ${fCountry}.`);
@@ -133,8 +152,18 @@ export function KycChat({
         {messages.map((m, i) => {
           const isLastAssistant = i === lastAssistantIdx && !busy;
           const opts = isLastAssistant ? detectOptions(m.text) : { kind: "none" as const, options: [] };
-          const docs = isLastAssistant && opts.kind === "none" ? detectDocuments(m.text) : [];
-          const display = trimToPreamble(m.text, opts.options.length > 0, docs.length > 0);
+          const tpl =
+            isLastAssistant && opts.kind === "none"
+              ? detectTemplate(m.text)
+              : { preamble: "", fields: [] as TemplateField[] };
+          const docs =
+            isLastAssistant && opts.kind === "none" && tpl.fields.length === 0
+              ? detectDocuments(m.text)
+              : [];
+          const display =
+            tpl.fields.length > 0
+              ? tpl.preamble
+              : trimToPreamble(m.text, opts.options.length > 0, docs.length > 0);
           return (
             <div key={i} className={m.role === "user" ? "flex justify-end" : "flex justify-start"}>
               <div className="max-w-[88%]">
@@ -185,6 +214,16 @@ export function KycChat({
                       ))}
                     </ul>
                   </div>
+                )}
+
+                {/* Fill-in template → interactive form */}
+                {tpl.fields.length > 0 && (
+                  <TemplateForm
+                    fields={tpl.fields}
+                    known={known}
+                    busy={busy}
+                    onSubmit={(payload) => send(payload, payload)}
+                  />
                 )}
               </div>
             </div>
@@ -288,6 +327,99 @@ function Field({ label, required, children }: { label: string; required?: boolea
       </span>
       {children}
     </label>
+  );
+}
+
+/**
+ * Renders a fill-in template as a form: one input per field, prefilled where the agent
+ * already knows the value, a native date picker for date fields. A blank line ("____")
+ * becomes an empty input — never shown as raw text. On submit, non-empty fields are
+ * posted back as "Label: Value" lines (the tolerant agent parser accepts this), and the
+ * payload doubles as the user-bubble text so there's a permanent record of what was sent.
+ */
+/**
+ * The agent often returns the template all-blank, so prefill empty fields from what the
+ * analyst already entered at intake (name / country / ID). Agent-provided values win; we
+ * only fill genuinely empty fields. Returns "" when nothing matches.
+ */
+function prefillFor(label: string, known: KnownInputs | null): string {
+  if (!known) return "";
+  const l = label.toLowerCase();
+  if (known.client_name && /legal name|full name|\bname\b|nombre|raz[oó]n social/.test(l))
+    return known.client_name;
+  if (known.country && /country|jurisdic|pa[ií]s/.test(l)) return known.country;
+  if (known.client_id && /registration|identif|\bid\b|dni|nie|nif|cif/.test(l)) return known.client_id;
+  return "";
+}
+
+function TemplateForm({
+  fields,
+  known,
+  busy,
+  onSubmit,
+}: {
+  fields: TemplateField[];
+  known: KnownInputs | null;
+  busy: boolean;
+  onSubmit: (payload: string) => void;
+}) {
+  const [vals, setVals] = useState<string[]>(() =>
+    fields.map((f) => {
+      const v = f.value || prefillFor(f.label, known);
+      return f.type === "date" ? toDateInputValue(v) : v;
+    }),
+  );
+
+  const inputCls =
+    "w-full rounded-lg border border-border-strong bg-surface px-3 py-2 text-sm outline-none focus:border-brand focus:ring-2 focus:ring-brand/15";
+
+  const hasAny = vals.some((v) => v.trim());
+
+  function submit() {
+    const lines = fields
+      .map((f, i) => {
+        const raw = vals[i].trim();
+        if (!raw) return null;
+        return `${f.label}: ${f.type === "date" ? fromDateInputValue(raw) : raw}`;
+      })
+      .filter((l): l is string => l !== null);
+    if (!lines.length) return;
+    onSubmit(lines.join("\n"));
+  }
+
+  return (
+    <div className="mt-2 rounded-xl border border-border bg-surface p-3">
+      <div className="mb-2 text-[11px] font-medium uppercase tracking-wide text-ink-3">
+        Complete the client profile
+      </div>
+      <div className="grid gap-3 sm:grid-cols-2">
+        {fields.map((f, i) => (
+          <Field key={i} label={f.displayLabel}>
+            <input
+              type={f.type === "date" ? "date" : "text"}
+              value={vals[i]}
+              onChange={(e) =>
+                setVals((prev) => {
+                  const next = [...prev];
+                  next[i] = e.target.value;
+                  return next;
+                })
+              }
+              className={inputCls}
+            />
+          </Field>
+        ))}
+      </div>
+      <div className="mt-3">
+        <button
+          onClick={submit}
+          disabled={busy || !hasAny}
+          className="rounded-lg bg-brand px-4 py-2 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-40"
+        >
+          Submit profile
+        </button>
+      </div>
+    </div>
   );
 }
 

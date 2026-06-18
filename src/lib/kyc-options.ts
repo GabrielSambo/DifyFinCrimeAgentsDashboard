@@ -109,6 +109,102 @@ export function detectOptions(text: string): DetectedOptions {
   return { kind: "none", options: [] };
 }
 
+/* ── Fill-in template → interactive form ──────────────────────────────────────
+   The agent sends a plain-text template ("Please fill in this template … 1.1 Full
+   legal name: ____") and ALREADY prefills what it knows (the value after each colon
+   IS the prefill). We turn each line into a typed field so the frontend renders inputs
+   instead of making the analyst copy-paste. The reply parser (LLM_ExtractClientInfo)
+   is tolerant of "Label: Value" lines, so submitting them back needs no backend change.
+*/
+
+export interface TemplateField {
+  /** Canonical label (numbering stripped) — used verbatim in the submit payload. */
+  label: string;
+  /** Label with date-format / "(if known)" hints stripped — what the analyst sees. */
+  displayLabel: string;
+  /** Prefill value; "" when the source line was a blank (____ / N/A / …). */
+  value: string;
+  type: "text" | "date";
+}
+
+export interface DetectedTemplate {
+  /** The agent's lead-in text (everything before the first field line). */
+  preamble: string;
+  fields: TemplateField[];
+}
+
+// Strict gate: the fill-in template ALWAYS opens with this phrase (DSL-enforced).
+// We must NOT reuse the loose isFillInTemplate() here — it fires on any "0.75"-style
+// decimal, which would turn screening summaries ("- PEP hits: 1") into a form.
+const TEMPLATE_PHRASE_RE =
+  /fill in (?:this|the) template|rellen[ae].*plantilla|complet[ae].*plantilla/i;
+
+// Optional numbering ("1.", "1.1", "2)") or bullet prefix, then "Label: value".
+const FIELD_LINE_RE = /^\s*(?:\d+(?:\.\d+)*[.)]?\s+|[-*•]\s+)?(.+?):\s*(.*)$/;
+const NUMBER_OR_BULLET_PREFIX_RE = /^\s*(?:\d+(?:\.\d+)*[.)]?\s+|[-*•]\s+)/;
+const BLANK_RE = /^(?:_+|—+|-+|n\/?a|tbd|\(blank\)|\.\.\.|…)$/i;
+// Date type only when the label itself is a date field ("Date of …", "… date",
+// "Fecha de …"). We test with parentheticals removed so "Country of Incorporation"
+// stays text and a grouped "Identity document (…, expiry date)" stays a single text box.
+const DATE_LABEL_RE = /\b(?:date|fecha|birth|nacimiento)\b/i;
+// Trailing hint qualifiers to drop from the displayed label only.
+const HINT_RE =
+  /\s*\((?:DD\/MM\/YYYY|D{1,2}\/M{1,2}\/Y{2,4}|if known|optional|si se conoce|opcional)[^)]*\)\s*$/i;
+
+/** DD/MM/YYYY → YYYY-MM-DD for the native date input; "" if not representable. */
+export function toDateInputValue(v: string): string {
+  const t = v.trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(t)) return t;
+  const m = t.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (m) return `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
+  return "";
+}
+
+/** YYYY-MM-DD → DD/MM/YYYY for the submit payload; passthrough otherwise. */
+export function fromDateInputValue(v: string): string {
+  const m = v.trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  return m ? `${m[3]}/${m[2]}/${m[1]}` : v.trim();
+}
+
+/**
+ * Parse a fill-in template into typed fields + the agent's lead-in text.
+ * Returns no fields (→ frontend falls back to plain text) unless this is clearly a
+ * template with ≥2 fields, so we never break a normal chat message.
+ */
+export function detectTemplate(text: string): DetectedTemplate {
+  if (!TEMPLATE_PHRASE_RE.test(text)) return { preamble: "", fields: [] };
+
+  const lines = text.split("\n");
+  const fields: TemplateField[] = [];
+  let firstFieldIdx = -1;
+
+  lines.forEach((line, i) => {
+    const m = line.match(FIELD_LINE_RE);
+    if (!m) return;
+    const label = m[1].trim();
+    const rawValue = m[2].trim();
+    const hasPrefix = NUMBER_OR_BULLET_PREFIX_RE.test(line);
+    const isBlank = rawValue === "" || BLANK_RE.test(rawValue);
+    // Precision guard: only numbered/bulleted lines or explicit blanks are fields.
+    // Drops prose like "Note: leave blank if unknown".
+    if (!hasPrefix && !isBlank) return;
+    if (!label) return;
+
+    const value = isBlank ? "" : rawValue;
+    const labelForType = label.replace(/\([^)]*\)/g, " ");
+    let type: TemplateField["type"] = DATE_LABEL_RE.test(labelForType) ? "date" : "text";
+    // If a date prefill can't be normalized, fall back to text so we never lose it.
+    if (type === "date" && value && !toDateInputValue(value)) type = "text";
+
+    if (firstFieldIdx === -1) firstFieldIdx = i;
+    fields.push({ label, displayLabel: label.replace(HINT_RE, "").trim(), value, type });
+  });
+
+  if (fields.length < 2) return { preamble: "", fields: [] };
+  const preamble = lines.slice(0, firstFieldIdx).join("\n").trim();
+  return { preamble, fields };
+}
+
 /** Extract a bulleted/numbered list of required documents for the checklist card. */
 export function detectDocuments(text: string): string[] {
   const t = text.toLowerCase();
