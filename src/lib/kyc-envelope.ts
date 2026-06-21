@@ -17,7 +17,8 @@ export type KycPhase =
   | "screening"
   | "review"
   | "complete"
-  | "qa";
+  | "qa"
+  | "menu";
 
 export interface KycOption {
   id: string;

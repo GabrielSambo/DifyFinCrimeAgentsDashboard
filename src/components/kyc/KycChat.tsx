@@ -66,6 +66,7 @@ export function KycChat({
   // replace this in slice 1.
   const formInputs = useRef<Record<string, unknown> | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
@@ -248,18 +249,16 @@ export function KycChat({
           );
         })}
 
-        {/* Intro CTA / intake form */}
+        {/* Capability launchpad (empty state) / intake form */}
         {phase === "intro" && (
-          <div className="pl-1">
-            <button
-              onClick={() => setPhase("form")}
-              className="inline-flex items-center gap-2 rounded-lg bg-brand px-4 py-2 text-sm font-medium text-white hover:bg-brand-600"
-            >
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"/></svg>
-              Start intake
-            </button>
-            <span className="ml-3 text-xs text-ink-3">…or ask a KYC question below.</span>
-          </div>
+          <KycLaunchpad
+            busy={busy}
+            onOnboard={() => setPhase("form")}
+            onCheckExisting={(id) =>
+              send(`Check existing client. Identifier: ${id}`, `Check existing: ${id}`)
+            }
+            onAskQuestion={() => inputRef.current?.focus()}
+          />
         )}
 
         {phase === "form" && (
@@ -326,6 +325,7 @@ export function KycChat({
       >
         <div className="flex items-center gap-2 rounded-xl border border-border-strong bg-surface px-3 py-1.5 focus-within:border-brand focus-within:ring-2 focus-within:ring-brand/15">
           <input
+            ref={inputRef}
             value={input}
             onChange={(e) => setInput(e.target.value)}
             placeholder="Type a reply, or ask anything…"
@@ -339,6 +339,91 @@ export function KycChat({
         </div>
         <p className="mt-2 text-center text-[11px] text-ink-3">Live agent · Agente1-FIN V1 (Dify sandbox)</p>
       </form>
+    </div>
+  );
+}
+
+/**
+ * Empty-state capability launchpad: 3 cards that steer the analyst to a supported lane
+ * (onboard / check existing / ask a policy question) while leaving free text open below.
+ * "Check existing" reveals an inline identifier input — the frontend collects the id so the
+ * existing lookup→review lane can run without a separate "ask for id" agent turn.
+ */
+function KycLaunchpad({
+  busy,
+  onOnboard,
+  onCheckExisting,
+  onAskQuestion,
+}: {
+  busy: boolean;
+  onOnboard: () => void;
+  onCheckExisting: (identifier: string) => void;
+  onAskQuestion: () => void;
+}) {
+  const [showId, setShowId] = useState(false);
+  const [identifier, setIdentifier] = useState("");
+  const cardCls =
+    "flex flex-col items-start gap-1 rounded-xl border border-border bg-surface p-4 text-left transition-colors hover:border-brand";
+
+  return (
+    <div className="pl-1">
+      <p className="mb-2 text-xs font-medium uppercase tracking-wide text-ink-3">What would you like to do?</p>
+      <div className="grid gap-2 sm:grid-cols-3">
+        <button type="button" onClick={onOnboard} className={cardCls}>
+          <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-brand-50 text-brand">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"/></svg>
+          </span>
+          <span className="text-sm font-medium text-ink">Onboard a new client</span>
+          <span className="text-xs text-ink-3">Classify the profile, collect details, and register.</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setShowId((v) => !v)}
+          className={showId ? cardCls + " border-brand" : cardCls}
+        >
+          <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-brand-50 text-brand">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><circle cx="11" cy="11" r="7" stroke="currentColor" strokeWidth="2"/><path d="m20 20-3-3" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg>
+          </span>
+          <span className="text-sm font-medium text-ink">Check an existing client</span>
+          <span className="text-xs text-ink-3">Pull a KYC record we already hold.</span>
+        </button>
+        <button type="button" onClick={onAskQuestion} className={cardCls}>
+          <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-brand-50 text-brand">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.9.4-1.5 1.2-1.5 2.2M12 17h.01" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
+          </span>
+          <span className="text-sm font-medium text-ink">Ask a policy question</span>
+          <span className="text-xs text-ink-3">Get a quick answer on KYC policy.</span>
+        </button>
+      </div>
+
+      {showId && (
+        <form
+          className="mt-2 flex items-center gap-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            const id = identifier.trim();
+            if (!id || busy) return;
+            onCheckExisting(id);
+          }}
+        >
+          <input
+            autoFocus
+            value={identifier}
+            onChange={(e) => setIdentifier(e.target.value)}
+            placeholder="Client name or ID"
+            className="flex-1 rounded-lg border border-border-strong bg-surface px-3 py-2 text-sm outline-none focus:border-brand focus:ring-2 focus:ring-brand/15"
+          />
+          <button
+            type="submit"
+            disabled={!identifier.trim() || busy}
+            className="rounded-lg bg-brand px-4 py-2 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-40"
+          >
+            Look up
+          </button>
+        </form>
+      )}
+
+      <p className="mt-2 text-xs text-ink-3">…or just type your request below.</p>
     </div>
   );
 }
