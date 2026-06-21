@@ -25,6 +25,48 @@ interface FieldLike {
   type: "text" | "date" | "boolean";
 }
 
+export interface AddressParts {
+  line1?: string;
+  line2?: string;
+  city?: string;
+  region?: string;
+  postal?: string;
+  country?: string;
+}
+
+const UK_POSTCODE = /\b[A-Z]{1,2}\d[\dA-Z]?\s*\d[A-Z]{2}\b/i;
+const US_ZIP = /\b\d{5}(?:-\d{4})?\b/;
+
+/**
+ * Best-effort split of a flat registry address string into structured parts. NEVER fabricates:
+ * the whole string always lands in line1 (safe default); only postal/country are pulled out when a
+ * pattern confidently identifies them. city/region/line2 stay blank unless a registry supplies real
+ * parts (see the attribute-lookup `parts` path). Pure + dependency-free.
+ */
+export function parseAddress(flat: string): AddressParts {
+  const s = (flat ?? "").trim();
+  if (!s) return {};
+  const out: AddressParts = { line1: s };
+  const tokens = s.split(",").map((t) => t.trim()).filter(Boolean);
+
+  // Postal code: first token containing a UK postcode or US ZIP.
+  for (const tok of tokens) {
+    const m = tok.match(UK_POSTCODE) ?? tok.match(US_ZIP);
+    if (m) {
+      out.postal = m[0].toUpperCase().replace(/\s+/g, " ");
+      break;
+    }
+  }
+  // Country: last token if it reads as a country word (alphabetic, no digits) and isn't the postal.
+  if (tokens.length >= 2) {
+    const last = tokens[tokens.length - 1];
+    if (/^[A-Za-z][A-Za-z .'-]+$/.test(last) && !UK_POSTCODE.test(last) && !US_ZIP.test(last)) {
+      out.country = last;
+    }
+  }
+  return out;
+}
+
 function sourceLabel(p: UboPayload): string {
   const t = p.target;
   const j = (t.jurisdiction ?? "").toLowerCase();
@@ -46,6 +88,8 @@ export function suggestionsFromUbo(
   if (!t) return {};
   const source = sourceLabel(payload);
   const firstUrl = payload.ubos?.find((u) => u.source_urls?.length)?.source_urls?.[0];
+  // Registry gives ONE address string → split best-effort once, reuse across the six sub-fields.
+  const ap = parseAddress(t.registered_address ?? "");
 
   const out: Record<string, FieldSuggestion> = {};
   for (const f of fields) {
@@ -57,10 +101,15 @@ export function suggestionsFromUbo(
     let value: string | undefined;
     const k = f.key.toLowerCase();
     if (/^(?:res_)?address_/.test(k)) {
-      // Structured address sub-fields. The registry returns ONE string → best-effort, never fabricated:
-      // whole string → line1, jurisdiction → country; city/region/postal/line2 are left blank (no reliable source).
-      if (/_line1$/.test(k)) value = t.registered_address ?? undefined;
-      else if (/_country$/.test(k)) value = t.jurisdiction ?? undefined;
+      // Structured address sub-fields. The registry returns ONE string → best-effort split (parseAddress),
+      // never fabricated: whole string → line1, postal/country pulled out by pattern; city/region/line2
+      // stay blank here (registry-exact parts arrive via the per-field 🔍 attribute lookup).
+      if (/_line1$/.test(k)) value = ap.line1 ?? t.registered_address ?? undefined;
+      else if (/_line2$/.test(k)) value = ap.line2 ?? undefined;
+      else if (/_city$/.test(k)) value = ap.city ?? undefined;
+      else if (/_region$/.test(k)) value = ap.region ?? undefined;
+      else if (/_postal$/.test(k)) value = ap.postal ?? undefined;
+      else if (/_country$/.test(k)) value = ap.country ?? t.jurisdiction ?? undefined;
     } else if (/address|registered.?office|domicil/.test(l)) value = t.registered_address ?? undefined;
     else if (/registration|reg\.?\s*(no|number)|company.?number|\blei\b|\bcif\b|\bnif\b|\bvat\b/.test(l))
       value = t.company_number ?? t.lei ?? undefined;
@@ -84,7 +133,25 @@ export type LookupAttribute =
   | "legal_form"
   | "incorporation_date"
   | "sic_code"
-  | "status";
+  | "status"
+  | "is_listed"
+  | "is_regulated"
+  | "listing_exchange"
+  | "listing_ticker"
+  | "listing_isin";
+
+/**
+ * Toggle/listing fields that ARE fetchable from the attribute app (Wikidata listing, web-fallback
+ * regulation) — exempt from the judgment guard below. Everything else matching the guard (regulator
+ * detail, intermediaries, source of funds/wealth) stays manual.
+ */
+const FETCHABLE_JUDGMENT = new Set<string>([
+  "is_listed",
+  "is_regulated",
+  "listing_exchange",
+  "listing_ticker",
+  "listing_isin",
+]);
 
 /**
  * Reverse of suggestionsFromUbo's match: which single attribute a template field maps to for the
@@ -93,7 +160,18 @@ export type LookupAttribute =
  */
 export function attributeForField(field: { key: string; label: string }): LookupAttribute | null {
   const l = `${field.key} ${field.label}`.toLowerCase();
-  if (/regulat|listing|listed|intermediar|source.?of.?funds|source.?of.?wealth|\bwealth\b|\bfunds?\b/.test(l)) return null;
+  // Block judgment/unsourced fields UNLESS they're an explicitly-fetchable toggle/listing key.
+  if (
+    !FETCHABLE_JUDGMENT.has(field.key) &&
+    /regulat|listing|listed|intermediar|source.?of.?funds|source.?of.?wealth|\bwealth\b|\bfunds?\b/.test(l)
+  )
+    return null;
+  // Fetchable toggles/listing detail (matched by exact key — the labels are too varied to regex).
+  if (field.key === "is_listed") return "is_listed";
+  if (field.key === "is_regulated") return "is_regulated";
+  if (field.key === "listing_exchange") return "listing_exchange";
+  if (field.key === "listing_ticker") return "listing_ticker";
+  if (field.key === "listing_isin") return "listing_isin";
   if (/address|registered.?office|domicil/.test(l)) return "registered_address";
   if (/legal.?form|forma.?legal|entity.?type|company.?type/.test(l)) return "legal_form";
   if (/incorporat.*date|date.*incorporat|constituc/.test(l)) return "incorporation_date";

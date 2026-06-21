@@ -612,6 +612,8 @@ function TemplateForm({
   const [reSearchingIdx, setReSearchingIdx] = useState<number | null>(null);
   // Brief note shown under a field after a re-search that returned nothing.
   const [reSearchMsg, setReSearchMsg] = useState<{ i: number; text: string } | null>(null);
+  // Toggle fields (is_listed / is_regulated) currently being auto-enriched → per-field spinner.
+  const [enriching, setEnriching] = useState<Set<string>>(() => new Set());
 
   // Auto-fill only makes sense for a company. Gate on client_type, else fall back to a
   // company-ish field set (legal form / registration / incorporation present).
@@ -620,6 +622,13 @@ function TemplateForm({
     fields.some((f) => /legal.?form|registration|company.?number|incorporat/i.test(`${f.key} ${f.label}`));
   const canAutofill = looksCompany && !!known?.client_name?.trim();
   const uboBusy = ubo.state === "resolving" || ubo.state === "running";
+
+  // Normalize a lookup answer to a yes/no toggle value — the web path returns "yes (…explanation…)",
+  // not a bare "yes". "" when it isn't a clear yes/no → never assert the toggle.
+  const toBool = (raw: string) => {
+    const a = (raw || "").trim().toLowerCase();
+    return /^yes\b/.test(a) ? "yes" : /^no\b/.test(a) ? "no" : "";
+  };
 
   // When the autofill payload arrives, map it to suggestions and merge — never clobbering edited/accepted.
   useEffect(() => {
@@ -635,6 +644,76 @@ function TemplateForm({
         return { value, status: "suggested", suggestion: s };
       }),
     );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ubo.payload]);
+
+  // After the payload lands, enrich the fetchable toggles (is_listed via Wikidata, is_regulated via web)
+  // from the attribute app — suggest, never assert; non-yes/no or empty answers are ignored. Once per payload.
+  useEffect(() => {
+    if (!ubo.payload) return;
+    const company = (ubo.payload.target?.name ?? known?.client_name ?? "").trim();
+    if (!company) return;
+    const targets = fields
+      .map((f, i) => ({ key: f.key, i, attr: attributeForField(f) }))
+      .filter((t) => t.attr === "is_listed" || t.attr === "is_regulated");
+    if (!targets.length) return;
+
+    let cancelled = false;
+    const jurisdiction = known?.country ?? ubo.payload.target?.jurisdiction ?? "United Kingdom";
+    const company_number = ubo.payload.target?.company_number ?? "";
+    const lei = ubo.payload.target?.lei ?? "";
+
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- mark the toggles in-flight for a spinner
+    setEnriching(new Set(targets.map((t) => t.key)));
+
+    void Promise.allSettled(
+      targets.map(async ({ key, i, attr }) => {
+        try {
+          const res = await fetch("/api/attribute", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ company_name: company, jurisdiction, company_number, lei, attribute: attr }),
+          });
+          const data = (await res.json()) as {
+            value?: string;
+            source_url?: string;
+            confidence?: "high" | "medium" | "low";
+            method?: "registry" | "web";
+          };
+          if (cancelled) return;
+          const value = toBool(String(data?.value ?? ""));
+          if (!value) return; // never assert from a non-yes/no (or empty) answer
+          setStates((prev) =>
+            prev.map((st, j) => {
+              if (j !== i || st.status === "edited" || st.status === "accepted" || st.status === "manual") return st;
+              return {
+                value,
+                status: "suggested",
+                suggestion: {
+                  value,
+                  source: data.method === "web" ? "Web" : "Wikidata",
+                  sourceUrl: data.source_url,
+                  confidence: data.confidence,
+                },
+              };
+            }),
+          );
+        } catch {
+          /* leave the toggle manual on failure */
+        } finally {
+          if (!cancelled)
+            setEnriching((prev) => {
+              const n = new Set(prev);
+              n.delete(key);
+              return n;
+            });
+        }
+      }),
+    );
+
+    return () => {
+      cancelled = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ubo.payload]);
 
@@ -673,10 +752,34 @@ function TemplateForm({
         source_url?: string;
         confidence?: "high" | "medium" | "low";
         method?: "registry" | "web";
+        parts?: Record<string, string>;
       };
+      // Registry-exact address → fan the structured parts across the six sub-fields at once.
+      if (attribute === "registered_address" && data.parts && Object.keys(data.parts).length) {
+        const parts = data.parts;
+        const src = data.method === "web" ? "Web" : "Registry";
+        setStates((prev) =>
+          prev.map((st, j) => {
+            if (!/^(?:res_)?address_/.test(fields[j].key)) return st;
+            const pv = parts[fields[j].key.replace(/^(?:res_)?address_/, "")];
+            if (!pv) return st;
+            return {
+              value: pv,
+              status: "suggested",
+              suggestion: { value: pv, source: src, sourceUrl: data.source_url, confidence: data.confidence },
+            };
+          }),
+        );
+        return;
+      }
       if (data?.value) {
         const raw = String(data.value);
-        const value = fields[i].type === "date" ? toDateInputValue(raw) : raw;
+        const isBoolField = fields[i].type === "boolean";
+        const value = isBoolField ? toBool(raw) : fields[i].type === "date" ? toDateInputValue(raw) : raw;
+        if (!value) {
+          setReSearchMsg({ i, text: "No clear yes/no result — set it manually." });
+          return;
+        }
         setStates((prev) =>
           prev.map((st, j) =>
             j === i
@@ -684,7 +787,7 @@ function TemplateForm({
                   value,
                   status: "suggested",
                   suggestion: {
-                    value: raw,
+                    value: isBoolField ? value : raw,
                     source: data.method === "web" ? "Web" : "Registry",
                     sourceUrl: data.source_url,
                     confidence: data.confidence,
@@ -717,6 +820,29 @@ function TemplateForm({
   }
   function acceptAll() {
     setStates((prev) => prev.map((st) => (st.status === "suggested" ? { ...st, status: "accepted" } : st)));
+  }
+
+  // 🔍 re-search button for field i — shown when the field maps to a lookup attribute and we know the company.
+  function searchBtn(i: number) {
+    if (!attributeForField(fields[i]) || !(ubo.payload?.target?.name ?? known?.client_name)) return null;
+    return (
+      <button
+        type="button"
+        title="Re-search this field from registries / web"
+        onClick={() => reSearchField(i)}
+        disabled={reSearchingIdx != null}
+        className="shrink-0 rounded-md border border-border-strong p-1.5 text-ink-3 hover:border-brand hover:text-brand disabled:opacity-40"
+      >
+        {reSearchingIdx === i ? (
+          <Spinner className="text-brand" />
+        ) : (
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none">
+            <circle cx="11" cy="11" r="7" stroke="currentColor" strokeWidth="2" />
+            <path d="m20 20-3-3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+          </svg>
+        )}
+      </button>
+    );
   }
 
   const suggestedCount = states.filter((s) => s.status === "suggested").length;
@@ -837,10 +963,11 @@ function TemplateForm({
                 )}
                 <div className={isBool ? "sm:col-span-2" : undefined}>
                   <div className="mb-1 flex items-center justify-between gap-2">
-                    <span className="block text-xs font-medium text-ink-2">
+                    <span className="flex items-center gap-1.5 text-xs font-medium text-ink-2">
                       {f.label} {f.required && <span className="text-bad">*</span>}
+                      {isBool && enriching.has(f.key) && <Spinner className="text-brand" />}
                     </span>
-                    {!isBool && st.suggestion?.source && (isSug || st.status === "accepted") &&
+                    {st.suggestion?.source && (isSug || st.status === "accepted") &&
                       (st.suggestion.sourceUrl ? (
                         <a
                           href={st.suggestion.sourceUrl}
@@ -853,6 +980,7 @@ function TemplateForm({
                         >
                           {st.status === "accepted" ? "✓ " : ""}
                           {st.suggestion.source}
+                          {st.suggestion.confidence === "low" ? " · unverified" : ""}
                         </a>
                       ) : (
                         <span
@@ -862,25 +990,29 @@ function TemplateForm({
                         >
                           {st.status === "accepted" ? "✓ " : ""}
                           {st.suggestion.source}
+                          {st.suggestion.confidence === "low" ? " · unverified" : ""}
                         </span>
                       ))}
                   </div>
                   {isBool ? (
-                    <div className="flex gap-1">
-                      {(["yes", "no"] as const).map((opt) => (
-                        <button
-                          key={opt}
-                          type="button"
-                          onClick={() => setVal(i, st.value === opt ? "" : opt)}
-                          className={`flex-1 rounded-lg border px-3 py-2 text-sm font-medium ${
-                            st.value === opt
-                              ? "border-brand bg-brand-50 text-brand"
-                              : "border-border-strong text-ink-3 hover:border-brand/50"
-                          }`}
-                        >
-                          {opt === "yes" ? "Yes" : "No"}
-                        </button>
-                      ))}
+                    <div className="flex items-center gap-1">
+                      <div className="flex flex-1 gap-1">
+                        {(["yes", "no"] as const).map((opt) => (
+                          <button
+                            key={opt}
+                            type="button"
+                            onClick={() => setVal(i, st.value === opt ? "" : opt)}
+                            className={`flex-1 rounded-lg border px-3 py-2 text-sm font-medium ${
+                              st.value === opt
+                                ? "border-brand bg-brand-50 text-brand"
+                                : "border-border-strong text-ink-3 hover:border-brand/50"
+                            }`}
+                          >
+                            {opt === "yes" ? "Yes" : "No"}
+                          </button>
+                        ))}
+                      </div>
+                      {searchBtn(i)}
                     </div>
                   ) : (
                     <div className="flex items-center gap-1">
@@ -890,27 +1022,10 @@ function TemplateForm({
                         onChange={(e) => setVal(i, e.target.value)}
                         className={`${inputCls} ${borderCls}`}
                       />
-                      {!!attributeForField(f) && !!(ubo.payload?.target?.name ?? known?.client_name) && (
-                        <button
-                          type="button"
-                          title="Re-search this field from registries / web"
-                          onClick={() => reSearchField(i)}
-                          disabled={reSearchingIdx != null}
-                          className="shrink-0 rounded-md border border-border-strong p-1.5 text-ink-3 hover:border-brand hover:text-brand disabled:opacity-40"
-                        >
-                          {reSearchingIdx === i ? (
-                            <Spinner className="text-brand" />
-                          ) : (
-                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none">
-                              <circle cx="11" cy="11" r="7" stroke="currentColor" strokeWidth="2" />
-                              <path d="m20 20-3-3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-                            </svg>
-                          )}
-                        </button>
-                      )}
+                      {searchBtn(i)}
                     </div>
                   )}
-                  {!isBool && isSug && (
+                  {isSug && (
                     <div className="mt-1 flex items-center gap-3 text-[11px]">
                       <button onClick={() => acceptField(i)} className="font-medium text-good hover:underline">
                         Accept

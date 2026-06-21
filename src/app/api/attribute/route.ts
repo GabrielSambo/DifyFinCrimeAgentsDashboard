@@ -24,12 +24,23 @@ interface Body {
   attribute?: string;
 }
 
+export interface AddressParts {
+  line1?: string;
+  line2?: string;
+  city?: string;
+  region?: string;
+  postal?: string;
+  country?: string;
+}
+
 export interface AttributeResult {
   source: "live" | "error";
   value?: string;
   source_url?: string;
   confidence?: "high" | "medium" | "low";
   method?: "registry" | "web";
+  /** Structured address sub-components — only present for the registered_address attribute. */
+  parts?: AddressParts;
   message?: string;
 }
 
@@ -38,7 +49,13 @@ function parseAnswer(answer: string): Partial<AttributeResult> {
   if (m) {
     try {
       const p = JSON.parse(m[1].trim()) as Partial<AttributeResult>;
-      return { value: p.value, source_url: p.source_url, confidence: p.confidence, method: p.method };
+      return {
+        value: p.value,
+        source_url: p.source_url,
+        confidence: p.confidence,
+        method: p.method,
+        parts: p.parts && typeof p.parts === "object" ? p.parts : undefined,
+      };
     } catch {
       /* fall through to empty */
     }
