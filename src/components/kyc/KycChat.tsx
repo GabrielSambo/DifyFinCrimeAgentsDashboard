@@ -14,7 +14,7 @@ import { useUboInvestigation } from "@/components/ubo/useUboInvestigation";
 import { UboCandidates } from "@/components/ubo/UboCandidates";
 import { UboResults } from "@/components/ubo/UboResults";
 import { Spinner } from "@/components/ui/atoms";
-import { suggestionsFromUbo, type FieldSuggestion } from "@/lib/ubo-to-template";
+import { suggestionsFromUbo, attributeForField, type FieldSuggestion } from "@/lib/ubo-to-template";
 import { parseSse } from "@/lib/sse";
 
 interface Msg {
@@ -608,8 +608,10 @@ function TemplateForm({
 
   // One UBO run per template. No opts → no persist (the onboarding client isn't registered yet).
   const ubo = useUboInvestigation();
-  // null = a full "Auto-fill"; a number = a single-field re-search (only that field updates).
-  const reSearchIdx = useRef<number | null>(null);
+  // Per-field re-search (🔍) in flight — the field index being re-looked-up, or null.
+  const [reSearchingIdx, setReSearchingIdx] = useState<number | null>(null);
+  // Brief note shown under a field after a re-search that returned nothing.
+  const [reSearchMsg, setReSearchMsg] = useState<{ i: number; text: string } | null>(null);
 
   // Auto-fill only makes sense for a company. Gate on client_type, else fall back to a
   // company-ish field set (legal form / registration / incorporation present).
@@ -619,15 +621,13 @@ function TemplateForm({
   const canAutofill = looksCompany && !!known?.client_name?.trim();
   const uboBusy = ubo.state === "resolving" || ubo.state === "running";
 
-  // When a payload arrives, map it to suggestions and merge — never clobbering accepted/edited fields.
+  // When the autofill payload arrives, map it to suggestions and merge — never clobbering edited/accepted.
   useEffect(() => {
     if (!ubo.payload) return;
     const sugg = suggestionsFromUbo(ubo.payload, fields);
-    const onlyIdx = reSearchIdx.current;
-    reSearchIdx.current = null;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- deriving form state from the async UBO payload while preserving analyst edits
     setStates((prev) =>
       prev.map((st, i) => {
-        if (onlyIdx != null && i !== onlyIdx) return st; // re-search touches one field
         if (st.status === "edited" || st.status === "accepted") return st; // respect analyst input
         const s = sugg[fields[i].key];
         if (!s) return st;
@@ -638,9 +638,8 @@ function TemplateForm({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ubo.payload]);
 
-  function startLookup(idx: number | null) {
+  function runAutofill() {
     if (!known?.client_name?.trim()) return;
-    reSearchIdx.current = idx;
     ubo.start({
       company: known.client_name.trim(),
       jurisdiction: known.country ?? "United Kingdom",
@@ -649,7 +648,63 @@ function TemplateForm({
     });
   }
 
+  // Per-field re-search (🔍): resolve ONE attribute via the attribute-lookup agent (registry-first,
+  // web fallback) — far cheaper than re-running the whole UBO trace, and returns a cited source URL.
+  async function reSearchField(i: number) {
+    const attribute = attributeForField(fields[i]);
+    const company = (ubo.payload?.target?.name ?? known?.client_name ?? "").trim();
+    if (!attribute || !company || reSearchingIdx != null) return;
+    setReSearchingIdx(i);
+    setReSearchMsg(null);
+    try {
+      const res = await fetch("/api/attribute", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          company_name: company,
+          jurisdiction: known?.country ?? ubo.payload?.target?.jurisdiction ?? "United Kingdom",
+          company_number: ubo.payload?.target?.company_number ?? "",
+          lei: ubo.payload?.target?.lei ?? "",
+          attribute,
+        }),
+      });
+      const data = (await res.json()) as {
+        value?: string;
+        source_url?: string;
+        confidence?: "high" | "medium" | "low";
+        method?: "registry" | "web";
+      };
+      if (data?.value) {
+        const raw = String(data.value);
+        const value = fields[i].type === "date" ? toDateInputValue(raw) : raw;
+        setStates((prev) =>
+          prev.map((st, j) =>
+            j === i
+              ? {
+                  value,
+                  status: "suggested",
+                  suggestion: {
+                    value: raw,
+                    source: data.method === "web" ? "Web" : "Registry",
+                    sourceUrl: data.source_url,
+                    confidence: data.confidence,
+                  },
+                }
+              : st,
+          ),
+        );
+      } else {
+        setReSearchMsg({ i, text: "No result found — try a registry, or enter it manually." });
+      }
+    } catch {
+      setReSearchMsg({ i, text: "Lookup failed — try again, or enter it manually." });
+    } finally {
+      setReSearchingIdx(null);
+    }
+  }
+
   function setVal(i: number, v: string) {
+    setReSearchMsg((m) => (m?.i === i ? null : m));
     setStates((prev) =>
       prev.map((st, j) => (j === i ? { value: v, status: v ? "edited" : "empty", suggestion: undefined } : st)),
     );
@@ -689,7 +744,7 @@ function TemplateForm({
         <div className="text-[11px] font-medium uppercase tracking-wide text-ink-3">Complete the client profile</div>
         {canAutofill && (
           <button
-            onClick={() => startLookup(null)}
+            onClick={runAutofill}
             disabled={uboBusy || busy}
             className="inline-flex items-center gap-1.5 rounded-lg border border-brand/40 bg-brand-50 px-2.5 py-1 text-xs font-medium text-brand hover:bg-brand-50/70 disabled:opacity-50"
           >
@@ -754,17 +809,30 @@ function TemplateForm({
                 <span className="block text-xs font-medium text-ink-2">
                   {f.label} {f.required && <span className="text-bad">*</span>}
                 </span>
-                {st.suggestion?.source && (isSug || st.status === "accepted") && (
-                  <span
-                    className={`inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] font-medium ${
-                      st.status === "accepted" ? "bg-good-bg text-good" : "bg-brand-50 text-brand"
-                    }`}
-                    title={st.suggestion.sourceUrl}
-                  >
-                    {st.status === "accepted" ? "✓ " : ""}
-                    {st.suggestion.source}
-                  </span>
-                )}
+                {st.suggestion?.source && (isSug || st.status === "accepted") &&
+                  (st.suggestion.sourceUrl ? (
+                    <a
+                      href={st.suggestion.sourceUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      title={st.suggestion.sourceUrl}
+                      className={`inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] font-medium underline decoration-current/40 hover:decoration-current ${
+                        st.status === "accepted" ? "bg-good-bg text-good" : "bg-brand-50 text-brand"
+                      }`}
+                    >
+                      {st.status === "accepted" ? "✓ " : ""}
+                      {st.suggestion.source}
+                    </a>
+                  ) : (
+                    <span
+                      className={`inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] font-medium ${
+                        st.status === "accepted" ? "bg-good-bg text-good" : "bg-brand-50 text-brand"
+                      }`}
+                    >
+                      {st.status === "accepted" ? "✓ " : ""}
+                      {st.suggestion.source}
+                    </span>
+                  ))}
               </div>
               <div className="flex items-center gap-1">
                 <input
@@ -773,18 +841,22 @@ function TemplateForm({
                   onChange={(e) => setVal(i, e.target.value)}
                   className={`${inputCls} ${borderCls}`}
                 />
-                {canAutofill && (
+                {!!attributeForField(f) && !!(ubo.payload?.target?.name ?? known?.client_name) && (
                   <button
                     type="button"
-                    title="Re-search this field"
-                    onClick={() => startLookup(i)}
-                    disabled={uboBusy}
+                    title="Re-search this field from registries / web"
+                    onClick={() => reSearchField(i)}
+                    disabled={reSearchingIdx != null}
                     className="shrink-0 rounded-md border border-border-strong p-1.5 text-ink-3 hover:border-brand hover:text-brand disabled:opacity-40"
                   >
-                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none">
-                      <circle cx="11" cy="11" r="7" stroke="currentColor" strokeWidth="2" />
-                      <path d="m20 20-3-3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-                    </svg>
+                    {reSearchingIdx === i ? (
+                      <Spinner className="text-brand" />
+                    ) : (
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none">
+                        <circle cx="11" cy="11" r="7" stroke="currentColor" strokeWidth="2" />
+                        <path d="m20 20-3-3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                      </svg>
+                    )}
                   </button>
                 )}
               </div>
@@ -798,6 +870,7 @@ function TemplateForm({
                   </button>
                 </div>
               )}
+              {reSearchMsg?.i === i && <div className="mt-1 text-[11px] text-warn">{reSearchMsg.text}</div>}
             </div>
           );
         })}

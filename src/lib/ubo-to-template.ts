@@ -71,3 +71,26 @@ export function suggestionsFromUbo(
   }
   return out;
 }
+
+/** The single attributes the attribute-lookup agent can resolve. */
+export type LookupAttribute =
+  | "registered_address"
+  | "legal_form"
+  | "incorporation_date"
+  | "sic_code"
+  | "status";
+
+/**
+ * Reverse of suggestionsFromUbo's match: which single attribute a template field maps to for the
+ * per-field re-search (🔍). Returns null for identity anchors (name / country / registration number,
+ * which are resolved once) and for judgment/unsourced fields — those get no re-search affordance.
+ */
+export function attributeForField(field: { key: string; label: string }): LookupAttribute | null {
+  const l = `${field.key} ${field.label}`.toLowerCase();
+  if (/regulat|listing|listed|source.?of.?funds|source.?of.?wealth|\bwealth\b|\bfunds?\b/.test(l)) return null;
+  if (/address|registered.?office|domicil/.test(l)) return "registered_address";
+  if (/legal.?form|forma.?legal|entity.?type|company.?type/.test(l)) return "legal_form";
+  if (/incorporat.*date|date.*incorporat|constituc/.test(l)) return "incorporation_date";
+  if (/activity|activ|business|economic|\bsic\b|sector/.test(l)) return "sic_code";
+  return null; // name / country / registration number = identity anchors
+}
