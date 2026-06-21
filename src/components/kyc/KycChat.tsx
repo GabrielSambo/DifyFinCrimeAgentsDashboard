@@ -58,6 +58,10 @@ export function KycChat({
   // Intake values mirrored to state (the ref can't be read during render) so the
   // template form can prefill name / country / ID the analyst already entered.
   const [known, setKnown] = useState<KnownInputs | null>(null);
+  // "Check existing client" id collection — shared by the launchpad card AND the greeting-menu
+  // option, so neither ever sends an id-less "check existing" query (which misroutes/asks twice).
+  const [existingIdOpen, setExistingIdOpen] = useState(false);
+  const [existingId, setExistingId] = useState("");
 
   const convId = useRef<string>("");
   // Intake values are RESENT on every turn — Dify doesn't reliably carry start
@@ -158,6 +162,23 @@ export function KycChat({
     void send(parts.join(", "), display);
   }
 
+  function openExistingLookup() {
+    setExistingIdOpen(true);
+  }
+
+  function submitExistingLookup() {
+    const id = existingId.trim();
+    if (!id || busy) return;
+    setExistingIdOpen(false);
+    setExistingId("");
+    void send(`Check existing client. Identifier: ${id}`, `Check existing: ${id}`);
+  }
+
+  function cancelExistingLookup() {
+    setExistingIdOpen(false);
+    setExistingId("");
+  }
+
   // Interactive envelope UI (options / fill-in form) renders for the most recent
   // assistant message only — older turns keep just their prose bubble.
   const lastAssistantIdx = useMemo(() => {
@@ -208,7 +229,11 @@ export function KycChat({
                     {options.map((o: KycOption) => (
                       <button
                         key={o.id}
-                        onClick={() => send(o.value, o.label)}
+                        onClick={() =>
+                          env?.phase === "menu" && o.id === "existing"
+                            ? openExistingLookup()
+                            : send(o.value, o.label)
+                        }
                         title={o.hint}
                         className="rounded-lg border border-border-strong bg-surface px-3 py-1.5 text-sm text-ink-2 hover:border-brand hover:bg-brand-50 hover:text-brand"
                       >
@@ -252,12 +277,15 @@ export function KycChat({
         {/* Capability launchpad (empty state) / intake form */}
         {phase === "intro" && (
           <KycLaunchpad
-            busy={busy}
             onOnboard={() => setPhase("form")}
-            onCheckExisting={(id) =>
-              send(`Check existing client. Identifier: ${id}`, `Check existing: ${id}`)
-            }
+            onCheckExisting={openExistingLookup}
             onAskQuestion={() => inputRef.current?.focus()}
+            existingIdOpen={existingIdOpen}
+            existingId={existingId}
+            onExistingIdChange={setExistingId}
+            onSubmitExisting={submitExistingLookup}
+            onCancelExisting={cancelExistingLookup}
+            busy={busy}
           />
         )}
 
@@ -316,6 +344,19 @@ export function KycChat({
         </button>
       </div>
 
+      {/* "Check existing client" id prompt for the greeting-menu option. In the intro empty
+          state the launchpad renders its own copy directly below the 3 cards. */}
+      {existingIdOpen && phase !== "intro" && (
+        <ExistingIdInput
+          className="flex items-center gap-2 border-t border-border pt-3"
+          value={existingId}
+          onChange={setExistingId}
+          onSubmit={submitExistingLookup}
+          onCancel={cancelExistingLookup}
+          busy={busy}
+        />
+      )}
+
       <form
         className="border-t border-border py-4"
         onSubmit={(e) => {
@@ -346,22 +387,31 @@ export function KycChat({
 /**
  * Empty-state capability launchpad: 3 cards that steer the analyst to a supported lane
  * (onboard / check existing / ask a policy question) while leaving free text open below.
- * "Check existing" reveals an inline identifier input — the frontend collects the id so the
- * existing lookup→review lane can run without a separate "ask for id" agent turn.
+ * "Check existing" opens the shared identifier input (see existingIdOpen) so the frontend
+ * collects the id and the existing lookup→review lane can run — the same input the greeting
+ * menu's "Check an existing client" option opens.
  */
 function KycLaunchpad({
-  busy,
   onOnboard,
   onCheckExisting,
   onAskQuestion,
+  existingIdOpen,
+  existingId,
+  onExistingIdChange,
+  onSubmitExisting,
+  onCancelExisting,
+  busy,
 }: {
-  busy: boolean;
   onOnboard: () => void;
-  onCheckExisting: (identifier: string) => void;
+  onCheckExisting: () => void;
   onAskQuestion: () => void;
+  existingIdOpen: boolean;
+  existingId: string;
+  onExistingIdChange: (v: string) => void;
+  onSubmitExisting: () => void;
+  onCancelExisting: () => void;
+  busy: boolean;
 }) {
-  const [showId, setShowId] = useState(false);
-  const [identifier, setIdentifier] = useState("");
   const cardCls =
     "flex flex-col items-start gap-1 rounded-xl border border-border bg-surface p-4 text-left transition-colors hover:border-brand";
 
@@ -376,11 +426,7 @@ function KycLaunchpad({
           <span className="text-sm font-medium text-ink">Onboard a new client</span>
           <span className="text-xs text-ink-3">Classify the profile, collect details, and register.</span>
         </button>
-        <button
-          type="button"
-          onClick={() => setShowId((v) => !v)}
-          className={showId ? cardCls + " border-brand" : cardCls}
-        >
+        <button type="button" onClick={onCheckExisting} className={cardCls}>
           <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-brand-50 text-brand">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><circle cx="11" cy="11" r="7" stroke="currentColor" strokeWidth="2"/><path d="m20 20-3-3" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg>
           </span>
@@ -396,35 +442,69 @@ function KycLaunchpad({
         </button>
       </div>
 
-      {showId && (
-        <form
+      {existingIdOpen && (
+        <ExistingIdInput
           className="mt-2 flex items-center gap-2"
-          onSubmit={(e) => {
-            e.preventDefault();
-            const id = identifier.trim();
-            if (!id || busy) return;
-            onCheckExisting(id);
-          }}
-        >
-          <input
-            autoFocus
-            value={identifier}
-            onChange={(e) => setIdentifier(e.target.value)}
-            placeholder="Client name or ID"
-            className="flex-1 rounded-lg border border-border-strong bg-surface px-3 py-2 text-sm outline-none focus:border-brand focus:ring-2 focus:ring-brand/15"
-          />
-          <button
-            type="submit"
-            disabled={!identifier.trim() || busy}
-            className="rounded-lg bg-brand px-4 py-2 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-40"
-          >
-            Look up
-          </button>
-        </form>
+          value={existingId}
+          onChange={onExistingIdChange}
+          onSubmit={onSubmitExisting}
+          onCancel={onCancelExisting}
+          busy={busy}
+        />
       )}
 
       <p className="mt-2 text-xs text-ink-3">…or just type your request below.</p>
     </div>
+  );
+}
+
+/** Inline "look up an existing client by name/ID" input — reused by the launchpad (below the
+ *  cards in the empty state) and the greeting-menu "Check an existing client" option. */
+function ExistingIdInput({
+  className,
+  value,
+  onChange,
+  onSubmit,
+  onCancel,
+  busy,
+}: {
+  className?: string;
+  value: string;
+  onChange: (v: string) => void;
+  onSubmit: () => void;
+  onCancel: () => void;
+  busy: boolean;
+}) {
+  return (
+    <form
+      className={className}
+      onSubmit={(e) => {
+        e.preventDefault();
+        onSubmit();
+      }}
+    >
+      <input
+        autoFocus
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder="Client name or ID to look up"
+        className="flex-1 rounded-lg border border-border-strong bg-surface px-3 py-2 text-sm outline-none focus:border-brand focus:ring-2 focus:ring-brand/15"
+      />
+      <button
+        type="submit"
+        disabled={!value.trim() || busy}
+        className="rounded-lg bg-brand px-4 py-2 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-40"
+      >
+        Look up
+      </button>
+      <button
+        type="button"
+        onClick={onCancel}
+        className="rounded-lg px-2 py-2 text-sm text-ink-3 hover:text-ink-2"
+      >
+        Cancel
+      </button>
+    </form>
   );
 }
 
