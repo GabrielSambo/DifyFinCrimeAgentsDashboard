@@ -58,12 +58,6 @@ export function Workspace() {
     }
   }, []);
 
-  // KYC handoff (company name, no registered client) → straight to the investigation.
-  function handoff(h: { company: string; jurisdiction: string }) {
-    setPrefill({ ...h, autorun: true, nonce: Date.now() });
-    setTab("ownership");
-  }
-
   // Dashboard click → open the consolidated profile.
   function openClient(c: Client) {
     setActiveClient(c);
@@ -171,7 +165,7 @@ export function Workspace() {
 
         <div className="min-h-0 flex-1 overflow-y-auto">
           {tab === "dashboard" && <Dashboard onOpenClient={openClient} />}
-          {tab === "onboarding" && <KycChat onHandoff={handoff} />}
+          {tab === "onboarding" && <KycChat />}
           {tab === "profile" && activeClient && <ClientProfile client={activeClient} onInvestigate={investigateClient} />}
           {tab === "profile" && !activeClient && (
             <div className="px-6 py-10 text-sm text-ink-3">Select a client from the Dashboard to view their profile.</div>

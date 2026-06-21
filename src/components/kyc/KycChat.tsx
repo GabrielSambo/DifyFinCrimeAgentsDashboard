@@ -10,6 +10,12 @@ import type {
   KycOption,
   KycDocument,
 } from "@/lib/kyc-envelope";
+import { useUboInvestigation } from "@/components/ubo/useUboInvestigation";
+import { UboCandidates } from "@/components/ubo/UboCandidates";
+import { UboResults } from "@/components/ubo/UboResults";
+import { Spinner } from "@/components/ui/atoms";
+import { suggestionsFromUbo, type FieldSuggestion } from "@/lib/ubo-to-template";
+import { parseSse } from "@/lib/sse";
 
 interface Msg {
   role: "assistant" | "user";
@@ -40,11 +46,7 @@ const COUNTRIES = [
   "United States",
 ];
 
-export function KycChat({
-  onHandoff,
-}: {
-  onHandoff: (h: { company: string; jurisdiction: string }) => void;
-}) {
+export function KycChat() {
   const [phase, setPhase] = useState<Phase>("intro");
   const [messages, setMessages] = useState<Msg[]>([{ role: "assistant", text: GREETING }]);
   const [input, setInput] = useState("");
@@ -186,10 +188,6 @@ export function KycChat({
     return -1;
   }, [messages]);
 
-  // The handoff CTA is emphasised once the agent signals ownership verification is the next step.
-  const latestEnvelope = lastAssistantIdx >= 0 ? messages[lastAssistantIdx].envelope : undefined;
-  const ownershipReady = latestEnvelope?.actions?.includes("verify_ownership") ?? false;
-
   return (
     <div className="mx-auto flex h-full max-w-2xl flex-col px-6">
       <div ref={scrollRef} className="flex-1 space-y-4 overflow-y-auto py-6">
@@ -199,7 +197,8 @@ export function KycChat({
           const showInteractive = isLastAssistant && !!env;
           const options = showInteractive ? env!.ui.options ?? [] : [];
           const fields = showInteractive ? env!.ui.fields ?? [] : [];
-          const documents = env?.ui.documents ?? [];
+          // Gate documents to the current turn too (was rendering on every past bubble).
+          const documents = showInteractive ? env!.ui.documents ?? [] : [];
           return (
             <div key={i} className={m.role === "user" ? "flex justify-end" : "flex justify-start"}>
               <div className="max-w-[88%]">
@@ -266,6 +265,7 @@ export function KycChat({
                     fields={fields}
                     known={known}
                     busy={busy}
+                    clientType={env?.state?.client_type}
                     onSubmit={(payload) => send(payload, payload)}
                   />
                 )}
@@ -324,24 +324,6 @@ export function KycChat({
         {error && (
           <div className="rounded-lg border border-bad/30 bg-bad-bg px-3 py-2 text-sm text-bad">{error}</div>
         )}
-      </div>
-
-      {/* Handoff affordance */}
-      <div className="flex items-center justify-between gap-3 border-t border-border py-2.5">
-        <span className="text-xs text-ink-3">
-          {ownershipReady ? "Ready to verify ownership for this client." : "Need to verify ownership?"}
-        </span>
-        <button
-          onClick={() => onHandoff({ company: fName.trim(), jurisdiction: fCountry })}
-          className={
-            ownershipReady
-              ? "inline-flex items-center gap-1.5 rounded-lg bg-brand px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-600"
-              : "inline-flex items-center gap-1.5 rounded-lg border border-border-strong bg-surface px-3 py-1.5 text-sm font-medium text-brand hover:border-brand hover:bg-brand-50"
-          }
-        >
-          Run ownership investigation
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M5 12h14M13 6l6 6-6 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
-        </button>
       </div>
 
       {/* "Check existing client" id prompt for the greeting-menu option. In the intro empty
@@ -596,34 +578,103 @@ function prefillFor(field: KycField, known: KnownInputs | null): string {
  * non-empty fields are posted back as "Label: Value" lines (the tolerant agent parser accepts
  * this), and the payload doubles as the user-bubble text so there's a record of what was sent.
  */
+type FieldStatus = "empty" | "manual" | "suggested" | "accepted" | "edited";
+interface FieldState {
+  value: string;
+  status: FieldStatus;
+  suggestion?: FieldSuggestion;
+}
+
 function TemplateForm({
   fields,
   known,
   busy,
+  clientType,
   onSubmit,
 }: {
   fields: KycField[];
   known: KnownInputs | null;
   busy: boolean;
+  clientType?: "PF" | "PJ";
   onSubmit: (payload: string) => void;
 }) {
-  const [vals, setVals] = useState<string[]>(() =>
+  const [states, setStates] = useState<FieldState[]>(() =>
     fields.map((f) => {
-      const v = f.value || prefillFor(f, known);
-      return f.type === "date" ? toDateInputValue(v) : v;
+      const v0 = f.value || prefillFor(f, known);
+      const value = f.type === "date" ? toDateInputValue(v0) : v0;
+      return { value, status: value ? "manual" : "empty" };
     }),
   );
 
-  const inputCls =
-    "w-full rounded-lg border border-border-strong bg-surface px-3 py-2 text-sm outline-none focus:border-brand focus:ring-2 focus:ring-brand/15";
+  // One UBO run per template. No opts → no persist (the onboarding client isn't registered yet).
+  const ubo = useUboInvestigation();
+  // null = a full "Auto-fill"; a number = a single-field re-search (only that field updates).
+  const reSearchIdx = useRef<number | null>(null);
 
-  const hasRequiredGap = fields.some((f, i) => f.required && !vals[i].trim());
-  const hasAny = vals.some((v) => v.trim());
+  // Auto-fill only makes sense for a company. Gate on client_type, else fall back to a
+  // company-ish field set (legal form / registration / incorporation present).
+  const looksCompany =
+    clientType === "PJ" ||
+    fields.some((f) => /legal.?form|registration|company.?number|incorporat/i.test(`${f.key} ${f.label}`));
+  const canAutofill = looksCompany && !!known?.client_name?.trim();
+  const uboBusy = ubo.state === "resolving" || ubo.state === "running";
+
+  // When a payload arrives, map it to suggestions and merge — never clobbering accepted/edited fields.
+  useEffect(() => {
+    if (!ubo.payload) return;
+    const sugg = suggestionsFromUbo(ubo.payload, fields);
+    const onlyIdx = reSearchIdx.current;
+    reSearchIdx.current = null;
+    setStates((prev) =>
+      prev.map((st, i) => {
+        if (onlyIdx != null && i !== onlyIdx) return st; // re-search touches one field
+        if (st.status === "edited" || st.status === "accepted") return st; // respect analyst input
+        const s = sugg[fields[i].key];
+        if (!s) return st;
+        const value = fields[i].type === "date" ? toDateInputValue(s.value) : s.value;
+        return { value, status: "suggested", suggestion: s };
+      }),
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ubo.payload]);
+
+  function startLookup(idx: number | null) {
+    if (!known?.client_name?.trim()) return;
+    reSearchIdx.current = idx;
+    ubo.start({
+      company: known.client_name.trim(),
+      jurisdiction: known.country ?? "United Kingdom",
+      depth: 3,
+      flags: { include_ownership: true, include_adverse_media: true, include_screening: true },
+    });
+  }
+
+  function setVal(i: number, v: string) {
+    setStates((prev) =>
+      prev.map((st, j) => (j === i ? { value: v, status: v ? "edited" : "empty", suggestion: undefined } : st)),
+    );
+  }
+  function acceptField(i: number) {
+    setStates((prev) => prev.map((st, j) => (j === i && st.status === "suggested" ? { ...st, status: "accepted" } : st)));
+  }
+  function rejectField(i: number) {
+    setStates((prev) => prev.map((st, j) => (j === i ? { value: "", status: "empty", suggestion: undefined } : st)));
+  }
+  function acceptAll() {
+    setStates((prev) => prev.map((st) => (st.status === "suggested" ? { ...st, status: "accepted" } : st)));
+  }
+
+  const suggestedCount = states.filter((s) => s.status === "suggested").length;
+  const hasRequiredGap = fields.some((f, i) => f.required && !states[i].value.trim());
+  const hasAny = states.some((s) => s.value.trim());
+
+  const inputCls =
+    "w-full rounded-lg border bg-surface px-3 py-2 text-sm outline-none focus:border-brand focus:ring-2 focus:ring-brand/15";
 
   function submit() {
     const lines = fields
       .map((f, i) => {
-        const raw = vals[i].trim();
+        const raw = states[i].value.trim();
         if (!raw) return null;
         return `${f.label}: ${f.type === "date" ? fromDateInputValue(raw) : raw}`;
       })
@@ -634,53 +685,144 @@ function TemplateForm({
 
   return (
     <div className="mt-2 rounded-xl border border-border bg-surface p-3">
-      <div className="mb-2 text-[11px] font-medium uppercase tracking-wide text-ink-3">
-        Complete the client profile
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <div className="text-[11px] font-medium uppercase tracking-wide text-ink-3">Complete the client profile</div>
+        {canAutofill && (
+          <button
+            onClick={() => startLookup(null)}
+            disabled={uboBusy || busy}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-brand/40 bg-brand-50 px-2.5 py-1 text-xs font-medium text-brand hover:bg-brand-50/70 disabled:opacity-50"
+          >
+            {uboBusy ? <Spinner className="text-brand" /> : <span aria-hidden>✨</span>}
+            {uboBusy ? "Looking up…" : "Auto-fill from registries"}
+          </button>
+        )}
       </div>
+
+      {/* Streamed progress step-list (buys patience vs a bare spinner). */}
+      {uboBusy && (
+        <div className="mb-3 rounded-lg border border-border bg-surface-2/50 p-2.5">
+          <div className="flex items-center gap-2 text-xs font-medium text-ink-2">
+            <Spinner className="text-brand" />
+            {ubo.state === "resolving" ? "Resolving the entity in the registries…" : "Pulling company details, ownership & screening…"}
+          </div>
+          {ubo.progress.length > 0 && (
+            <ul className="mt-1.5 space-y-1">
+              {ubo.progress.map((line, i) => (
+                <li key={i} className="flex items-center gap-2 text-[11px] text-ink-3">
+                  <span className="h-1 w-1 rounded-full bg-good" />
+                  {line}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+
+      {/* Entity picker on ambiguous match. */}
+      {ubo.state === "choosing" && (
+        <div className="mb-3">
+          <UboCandidates candidates={ubo.candidates} onSelect={ubo.selectCandidate} onSearchAgain={ubo.searchAgain} />
+        </div>
+      )}
+
+      {ubo.state === "error" && ubo.error && (
+        <div className="mb-3 rounded-lg border border-bad/30 bg-bad-bg px-3 py-2 text-xs text-bad">
+          Couldn’t auto-fill: {ubo.error} — enter the details manually or retry.
+        </div>
+      )}
+
+      {suggestedCount > 0 && (
+        <div className="mb-2 flex items-center justify-between gap-2 rounded-lg bg-brand-50/60 px-2.5 py-1.5 text-xs text-ink-2">
+          <span>
+            {suggestedCount} field{suggestedCount > 1 ? "s" : ""} pre-filled from registries — review &amp; accept.
+          </span>
+          <button onClick={acceptAll} className="rounded-md bg-brand px-2 py-0.5 text-[11px] font-medium text-white hover:bg-brand-600">
+            Accept all
+          </button>
+        </div>
+      )}
+
       <div className="grid gap-3 sm:grid-cols-2">
-        {fields.map((f, i) => (
-          <Field key={f.key} label={f.label} required={f.required}>
-            <input
-              type={f.type === "date" ? "date" : "text"}
-              value={vals[i]}
-              onChange={(e) =>
-                setVals((prev) => {
-                  const next = [...prev];
-                  next[i] = e.target.value;
-                  return next;
-                })
-              }
-              className={inputCls}
-            />
-          </Field>
-        ))}
+        {fields.map((f, i) => {
+          const st = states[i];
+          const isSug = st.status === "suggested";
+          const borderCls = isSug ? "border-brand/50 ring-1 ring-brand/15" : "border-border-strong";
+          return (
+            <div key={f.key}>
+              <div className="mb-1 flex items-center justify-between gap-2">
+                <span className="block text-xs font-medium text-ink-2">
+                  {f.label} {f.required && <span className="text-bad">*</span>}
+                </span>
+                {st.suggestion?.source && (isSug || st.status === "accepted") && (
+                  <span
+                    className={`inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] font-medium ${
+                      st.status === "accepted" ? "bg-good-bg text-good" : "bg-brand-50 text-brand"
+                    }`}
+                    title={st.suggestion.sourceUrl}
+                  >
+                    {st.status === "accepted" ? "✓ " : ""}
+                    {st.suggestion.source}
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center gap-1">
+                <input
+                  type={f.type === "date" ? "date" : "text"}
+                  value={st.value}
+                  onChange={(e) => setVal(i, e.target.value)}
+                  className={`${inputCls} ${borderCls}`}
+                />
+                {canAutofill && (
+                  <button
+                    type="button"
+                    title="Re-search this field"
+                    onClick={() => startLookup(i)}
+                    disabled={uboBusy}
+                    className="shrink-0 rounded-md border border-border-strong p-1.5 text-ink-3 hover:border-brand hover:text-brand disabled:opacity-40"
+                  >
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none">
+                      <circle cx="11" cy="11" r="7" stroke="currentColor" strokeWidth="2" />
+                      <path d="m20 20-3-3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                    </svg>
+                  </button>
+                )}
+              </div>
+              {isSug && (
+                <div className="mt-1 flex items-center gap-3 text-[11px]">
+                  <button onClick={() => acceptField(i)} className="font-medium text-good hover:underline">
+                    Accept
+                  </button>
+                  <button onClick={() => rejectField(i)} className="text-ink-3 hover:text-bad hover:underline">
+                    Reject
+                  </button>
+                </div>
+              )}
+            </div>
+          );
+        })}
       </div>
-      <div className="mt-3">
+
+      <div className="mt-3 flex items-center gap-3">
         <button
           onClick={submit}
-          disabled={busy || !hasAny || hasRequiredGap}
+          disabled={busy || uboBusy || !hasAny || hasRequiredGap}
           className="rounded-lg bg-brand px-4 py-2 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-40"
         >
           Submit profile
         </button>
+        {suggestedCount > 0 && <span className="text-[11px] text-ink-3">{suggestedCount} field(s) still to review</span>}
       </div>
+
+      {/* Enrichment block — UBOs / ownership / directors / screening from the same lookup. */}
+      {ubo.payload && (
+        <div className="mt-4">
+          <div className="mb-2 text-[11px] font-medium uppercase tracking-wide text-ink-3">Ownership &amp; screening</div>
+          <UboResults payload={ubo.payload} />
+        </div>
+      )}
     </div>
   );
-}
-
-function parseSse(block: string): { event: string; data: unknown } | null {
-  let event = "message";
-  let data = "";
-  for (const line of block.split("\n")) {
-    if (line.startsWith("event:")) event = line.slice(6).trim();
-    else if (line.startsWith("data:")) data += line.slice(5).trim();
-  }
-  if (!data) return null;
-  try {
-    return { event, data: JSON.parse(data) };
-  } catch {
-    return null;
-  }
 }
 
 /* ── Markdown bubble ──────────────────────────────────────────────────────────
