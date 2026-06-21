@@ -22,7 +22,7 @@ export interface FieldSuggestion {
 interface FieldLike {
   key: string;
   label: string;
-  type: "text" | "date";
+  type: "text" | "date" | "boolean";
 }
 
 function sourceLabel(p: UboPayload): string {
@@ -51,11 +51,17 @@ export function suggestionsFromUbo(
   for (const f of fields) {
     const l = `${f.key} ${f.label}`.toLowerCase();
 
-    // Never auto-fill judgments / unsourced facts.
-    if (/regulat|listing|listed|source.?of.?funds|source.?of.?wealth|\bwealth\b|\bfunds?\b/.test(l)) continue;
+    // Never auto-fill judgments / unsourced facts (regulation, listing, intermediaries, source of funds/wealth).
+    if (/regulat|listing|listed|intermediar|source.?of.?funds|source.?of.?wealth|\bwealth\b|\bfunds?\b/.test(l)) continue;
 
     let value: string | undefined;
-    if (/address|registered.?office|domicil/.test(l)) value = t.registered_address ?? undefined;
+    const k = f.key.toLowerCase();
+    if (/^(?:res_)?address_/.test(k)) {
+      // Structured address sub-fields. The registry returns ONE string → best-effort, never fabricated:
+      // whole string → line1, jurisdiction → country; city/region/postal/line2 are left blank (no reliable source).
+      if (/_line1$/.test(k)) value = t.registered_address ?? undefined;
+      else if (/_country$/.test(k)) value = t.jurisdiction ?? undefined;
+    } else if (/address|registered.?office|domicil/.test(l)) value = t.registered_address ?? undefined;
     else if (/registration|reg\.?\s*(no|number)|company.?number|\blei\b|\bcif\b|\bnif\b|\bvat\b/.test(l))
       value = t.company_number ?? t.lei ?? undefined;
     else if (/legal.?form|forma.?legal|entity.?type|company.?type/.test(l)) value = t.legal_form ?? undefined;
@@ -87,7 +93,7 @@ export type LookupAttribute =
  */
 export function attributeForField(field: { key: string; label: string }): LookupAttribute | null {
   const l = `${field.key} ${field.label}`.toLowerCase();
-  if (/regulat|listing|listed|source.?of.?funds|source.?of.?wealth|\bwealth\b|\bfunds?\b/.test(l)) return null;
+  if (/regulat|listing|listed|intermediar|source.?of.?funds|source.?of.?wealth|\bwealth\b|\bfunds?\b/.test(l)) return null;
   if (/address|registered.?office|domicil/.test(l)) return "registered_address";
   if (/legal.?form|forma.?legal|entity.?type|company.?type/.test(l)) return "legal_form";
   if (/incorporat.*date|date.*incorporat|constituc/.test(l)) return "incorporation_date";

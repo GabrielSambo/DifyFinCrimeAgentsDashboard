@@ -31,8 +31,12 @@ export interface KycField {
   key: string;
   label: string;
   value: string;
-  type: "text" | "date";
+  type: "text" | "date" | "boolean";
   required?: boolean;
+  /** Section heading to group fields under (e.g. "Regulation & listing"). */
+  group?: string;
+  /** Render this field only when another field's value equals `equals` (conditional reveal). */
+  showIf?: { key: string; equals: string };
 }
 
 export interface KycDocument {

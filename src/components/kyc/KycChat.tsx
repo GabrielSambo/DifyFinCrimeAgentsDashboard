@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import type { Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -726,11 +726,32 @@ function TemplateForm({
   const inputCls =
     "w-full rounded-lg border bg-surface px-3 py-2 text-sm outline-none focus:border-brand focus:ring-2 focus:ring-brand/15";
 
+  // Current value of every field by key — drives conditional (showIf) reveal + submit omission.
+  const valByKey = useMemo(
+    () => Object.fromEntries(fields.map((f, i) => [f.key, states[i].value])),
+    [fields, states],
+  );
+  const isHidden = (f: KycField) => !!f.showIf && valByKey[f.showIf.key] !== f.showIf.equals;
+
+  // Indices of visible fields that begin a new section group (→ render a heading above them).
+  const headerForIdx = useMemo(() => {
+    const set = new Set<number>();
+    const visible = fields.map((f, i) => ({ f, i })).filter(({ f }) => !isHidden(f));
+    visible.forEach(({ f, i }, vi) => {
+      const prev = vi > 0 ? visible[vi - 1].f.group : undefined;
+      if (f.group && f.group !== prev) set.add(i);
+    });
+    return set;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fields, valByKey]);
+
   function submit() {
     const lines = fields
       .map((f, i) => {
+        if (isHidden(f)) return null; // omit fields hidden by an unmet showIf condition
         const raw = states[i].value.trim();
         if (!raw) return null;
+        if (f.type === "boolean") return `${f.label}: ${raw === "yes" ? "Yes" : "No"}`;
         return `${f.label}: ${f.type === "date" ? fromDateInputValue(raw) : raw}`;
       })
       .filter((l): l is string => l !== null);
@@ -799,81 +820,112 @@ function TemplateForm({
       )}
 
       <div className="grid gap-3 sm:grid-cols-2">
-        {fields.map((f, i) => {
-          const st = states[i];
-          const isSug = st.status === "suggested";
-          const borderCls = isSug ? "border-brand/50 ring-1 ring-brand/15" : "border-border-strong";
-          return (
-            <div key={f.key}>
-              <div className="mb-1 flex items-center justify-between gap-2">
-                <span className="block text-xs font-medium text-ink-2">
-                  {f.label} {f.required && <span className="text-bad">*</span>}
-                </span>
-                {st.suggestion?.source && (isSug || st.status === "accepted") &&
-                  (st.suggestion.sourceUrl ? (
-                    <a
-                      href={st.suggestion.sourceUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      title={st.suggestion.sourceUrl}
-                      className={`inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] font-medium underline decoration-current/40 hover:decoration-current ${
-                        st.status === "accepted" ? "bg-good-bg text-good" : "bg-brand-50 text-brand"
-                      }`}
-                    >
-                      {st.status === "accepted" ? "✓ " : ""}
-                      {st.suggestion.source}
-                    </a>
-                  ) : (
-                    <span
-                      className={`inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] font-medium ${
-                        st.status === "accepted" ? "bg-good-bg text-good" : "bg-brand-50 text-brand"
-                      }`}
-                    >
-                      {st.status === "accepted" ? "✓ " : ""}
-                      {st.suggestion.source}
-                    </span>
-                  ))}
-              </div>
-              <div className="flex items-center gap-1">
-                <input
-                  type={f.type === "date" ? "date" : "text"}
-                  value={st.value}
-                  onChange={(e) => setVal(i, e.target.value)}
-                  className={`${inputCls} ${borderCls}`}
-                />
-                {!!attributeForField(f) && !!(ubo.payload?.target?.name ?? known?.client_name) && (
-                  <button
-                    type="button"
-                    title="Re-search this field from registries / web"
-                    onClick={() => reSearchField(i)}
-                    disabled={reSearchingIdx != null}
-                    className="shrink-0 rounded-md border border-border-strong p-1.5 text-ink-3 hover:border-brand hover:text-brand disabled:opacity-40"
-                  >
-                    {reSearchingIdx === i ? (
-                      <Spinner className="text-brand" />
-                    ) : (
-                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none">
-                        <circle cx="11" cy="11" r="7" stroke="currentColor" strokeWidth="2" />
-                        <path d="m20 20-3-3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-                      </svg>
-                    )}
-                  </button>
+        {(() => {
+          return fields.map((f, i) => {
+            const st = states[i];
+            if (isHidden(f)) return null; // conditional reveal — hide until its toggle matches
+            const showHeader = headerForIdx.has(i);
+            const isSug = st.status === "suggested";
+            const isBool = f.type === "boolean";
+            const borderCls = isSug ? "border-brand/50 ring-1 ring-brand/15" : "border-border-strong";
+            return (
+              <Fragment key={f.key}>
+                {showHeader && (
+                  <div className="sm:col-span-2 mt-1 border-b border-border pb-1 text-[11px] font-semibold uppercase tracking-wide text-ink-3">
+                    {f.group}
+                  </div>
                 )}
-              </div>
-              {isSug && (
-                <div className="mt-1 flex items-center gap-3 text-[11px]">
-                  <button onClick={() => acceptField(i)} className="font-medium text-good hover:underline">
-                    Accept
-                  </button>
-                  <button onClick={() => rejectField(i)} className="text-ink-3 hover:text-bad hover:underline">
-                    Reject
-                  </button>
+                <div className={isBool ? "sm:col-span-2" : undefined}>
+                  <div className="mb-1 flex items-center justify-between gap-2">
+                    <span className="block text-xs font-medium text-ink-2">
+                      {f.label} {f.required && <span className="text-bad">*</span>}
+                    </span>
+                    {!isBool && st.suggestion?.source && (isSug || st.status === "accepted") &&
+                      (st.suggestion.sourceUrl ? (
+                        <a
+                          href={st.suggestion.sourceUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          title={st.suggestion.sourceUrl}
+                          className={`inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] font-medium underline decoration-current/40 hover:decoration-current ${
+                            st.status === "accepted" ? "bg-good-bg text-good" : "bg-brand-50 text-brand"
+                          }`}
+                        >
+                          {st.status === "accepted" ? "✓ " : ""}
+                          {st.suggestion.source}
+                        </a>
+                      ) : (
+                        <span
+                          className={`inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] font-medium ${
+                            st.status === "accepted" ? "bg-good-bg text-good" : "bg-brand-50 text-brand"
+                          }`}
+                        >
+                          {st.status === "accepted" ? "✓ " : ""}
+                          {st.suggestion.source}
+                        </span>
+                      ))}
+                  </div>
+                  {isBool ? (
+                    <div className="flex gap-1">
+                      {(["yes", "no"] as const).map((opt) => (
+                        <button
+                          key={opt}
+                          type="button"
+                          onClick={() => setVal(i, st.value === opt ? "" : opt)}
+                          className={`flex-1 rounded-lg border px-3 py-2 text-sm font-medium ${
+                            st.value === opt
+                              ? "border-brand bg-brand-50 text-brand"
+                              : "border-border-strong text-ink-3 hover:border-brand/50"
+                          }`}
+                        >
+                          {opt === "yes" ? "Yes" : "No"}
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-1">
+                      <input
+                        type={f.type === "date" ? "date" : "text"}
+                        value={st.value}
+                        onChange={(e) => setVal(i, e.target.value)}
+                        className={`${inputCls} ${borderCls}`}
+                      />
+                      {!!attributeForField(f) && !!(ubo.payload?.target?.name ?? known?.client_name) && (
+                        <button
+                          type="button"
+                          title="Re-search this field from registries / web"
+                          onClick={() => reSearchField(i)}
+                          disabled={reSearchingIdx != null}
+                          className="shrink-0 rounded-md border border-border-strong p-1.5 text-ink-3 hover:border-brand hover:text-brand disabled:opacity-40"
+                        >
+                          {reSearchingIdx === i ? (
+                            <Spinner className="text-brand" />
+                          ) : (
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none">
+                              <circle cx="11" cy="11" r="7" stroke="currentColor" strokeWidth="2" />
+                              <path d="m20 20-3-3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                            </svg>
+                          )}
+                        </button>
+                      )}
+                    </div>
+                  )}
+                  {!isBool && isSug && (
+                    <div className="mt-1 flex items-center gap-3 text-[11px]">
+                      <button onClick={() => acceptField(i)} className="font-medium text-good hover:underline">
+                        Accept
+                      </button>
+                      <button onClick={() => rejectField(i)} className="text-ink-3 hover:text-bad hover:underline">
+                        Reject
+                      </button>
+                    </div>
+                  )}
+                  {reSearchMsg?.i === i && <div className="mt-1 text-[11px] text-warn">{reSearchMsg.text}</div>}
                 </div>
-              )}
-              {reSearchMsg?.i === i && <div className="mt-1 text-[11px] text-warn">{reSearchMsg.text}</div>}
-            </div>
-          );
-        })}
+              </Fragment>
+            );
+          });
+        })()}
       </div>
 
       <div className="mt-3 flex items-center gap-3">
