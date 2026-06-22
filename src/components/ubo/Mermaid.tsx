@@ -8,6 +8,22 @@ import { useEffect, useId, useRef, useState } from "react";
   first-paint bundle. On any parse/render error we fall back to the raw diagram
   source so the analyst still sees the structure instead of a blank box.
 */
+
+/*
+  The UBO agent emits edge labels like  |25–50% (indirect; incentive-based stake)|
+  with the text UNQUOTED. Mermaid's flowchart parser reads an unquoted "(" as the
+  start of a node-shape token and dies with "Syntax error in text". Node labels in
+  the agent output are already quoted, so only edge labels need hardening: wrap any
+  unquoted |…| label in double quotes (escaping stray quotes). Quoting is valid
+  Mermaid and a no-op for labels that are already clean, so this can't regress a
+  diagram that renders today — it only rescues the ones that don't.
+*/
+function quoteEdgeLabels(src: string): string {
+  return src.replace(/\|([^|\n]+)\|/g, (m, label) => {
+    const t = (label as string).trim();
+    return /^".*"$/.test(t) ? m : `|"${t.replace(/"/g, "'")}"|`;
+  });
+}
 export function Mermaid({ chart }: { chart: string }) {
   const ref = useRef<HTMLDivElement>(null);
   const rawId = useId();
@@ -26,7 +42,7 @@ export function Mermaid({ chart }: { chart: string }) {
           securityLevel: "strict",
           fontFamily: "var(--font-sans)",
         });
-        const { svg } = await mermaid.render(id, chart.trim());
+        const { svg } = await mermaid.render(id, quoteEdgeLabels(chart.trim()));
         if (active && ref.current) ref.current.innerHTML = svg;
       } catch {
         if (active) setError(true);

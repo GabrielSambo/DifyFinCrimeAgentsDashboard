@@ -57,6 +57,12 @@ export interface UseUboInvestigation {
 export function useUboInvestigation(opts?: {
   clientId?: string;
   priorScreening?: ScreenSummary | null;
+  /**
+   * Which version of the UBO agent to invoke. The standalone Ownership tab opts into
+   * "full" (the analyst markdown report + Mermaid ownership diagram); the inline KYC run
+   * leaves this unset and keeps the light, payload-driven path. Fixed per mount.
+   */
+  mode?: "kyc_lite" | "full";
 }): UseUboInvestigation {
   const [state, setState] = useState<UboRunState>("idle");
   const [progress, setProgress] = useState<string[]>([]);
@@ -205,7 +211,7 @@ export function useUboInvestigation(opts?: {
         company: name.trim(),
         jurisdiction: j,
         depth: d,
-        mode: "kyc_lite",
+        mode: opts?.mode ?? "kyc_lite",
         include_ownership: flagsRef.current.include_ownership,
         include_adverse_media: flagsRef.current.include_adverse_media,
         include_screening: flagsRef.current.include_screening,
@@ -225,7 +231,7 @@ export function useUboInvestigation(opts?: {
       {
         jurisdiction: seedRef.current.jurisdiction,
         depth: seedRef.current.depth,
-        mode: "kyc_lite",
+        mode: opts?.mode ?? "kyc_lite",
         conversationId,
         query: String(selection),
         include_ownership: flagsRef.current.include_ownership,
@@ -247,7 +253,7 @@ export function useUboInvestigation(opts?: {
       {
         jurisdiction: seedRef.current.jurisdiction,
         depth: seedRef.current.depth,
-        mode: "kyc_lite",
+        mode: opts?.mode ?? "kyc_lite",
         conversationId,
         query: text,
         include_ownership: flagsRef.current.include_ownership,

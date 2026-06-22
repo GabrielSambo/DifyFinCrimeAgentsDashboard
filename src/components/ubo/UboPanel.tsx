@@ -54,6 +54,9 @@ export function UboPanel({ prefill }: { prefill?: UboPrefill }) {
   const ubo = useUboInvestigation({
     clientId: prefill?.clientId,
     priorScreening: prefill?.priorScreening,
+    // The Ownership tab is built for the full analyst report (markdown narrative + Mermaid
+    // ownership diagram + Sources), not the light payload-driven cards the KYC inline run uses.
+    mode: "full",
   });
 
   // Apply a handoff/prefill from elsewhere — resolve (turn 1), then the analyst confirms.
