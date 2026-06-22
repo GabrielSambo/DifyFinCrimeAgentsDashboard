@@ -45,6 +45,9 @@ export function Workspace() {
   const [tab, setTab] = useState<Tab>("dashboard");
   const [prefill, setPrefill] = useState<UboPrefill | undefined>();
   const [activeClient, setActiveClient] = useState<Client | null>(null);
+  // Bumping this remounts <KycChat>, which is the reset: fresh state + a new convId ref → a brand-new
+  // Dify conversation. Works mid-turn (escape hatch for a stuck/slow turn).
+  const [chatNonce, setChatNonce] = useState(0);
 
   // Re-pull a client from the portfolio (mapped, incl. persisted cdd) by id.
   const refreshClient = useCallback(async (id: string) => {
@@ -151,6 +154,19 @@ export function Workspace() {
               ← Dashboard
             </button>
           )}
+          {/* Restart a stuck/abandoned KYC conversation with a fresh Dify thread. */}
+          {tab === "onboarding" && (
+            <button
+              onClick={() => setChatNonce((n) => n + 1)}
+              title="Start a new KYC conversation"
+              className="flex items-center gap-1.5 rounded-lg border border-border-strong bg-surface px-3 py-1.5 text-sm font-medium text-ink hover:bg-surface-2"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" className="shrink-0">
+                <path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
+              </svg>
+              New chat
+            </button>
+          )}
           <select
             value={tab}
             onChange={(e) => setTab(e.target.value as Tab)}
@@ -165,7 +181,7 @@ export function Workspace() {
 
         <div className="min-h-0 flex-1 overflow-y-auto">
           {tab === "dashboard" && <Dashboard onOpenClient={openClient} />}
-          {tab === "onboarding" && <KycChat />}
+          {tab === "onboarding" && <KycChat key={chatNonce} />}
           {tab === "profile" && activeClient && <ClientProfile client={activeClient} onInvestigate={investigateClient} />}
           {tab === "profile" && !activeClient && (
             <div className="px-6 py-10 text-sm text-ink-3">Select a client from the Dashboard to view their profile.</div>

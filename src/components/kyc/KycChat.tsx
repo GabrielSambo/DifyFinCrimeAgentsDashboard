@@ -218,7 +218,7 @@ export function KycChat() {
   const statusLabel = useEscalatingStatus(busy, waitingHasText);
 
   return (
-    <div className="mx-auto flex h-full max-w-2xl flex-col px-6">
+    <div className="mx-auto flex h-full max-w-3xl flex-col px-6 2xl:max-w-5xl">
       <div ref={scrollRef} className="flex-1 space-y-4 overflow-y-auto py-6">
         {messages.map((m, i) => {
           const isLastAssistant = i === lastAssistantIdx && !busy;
@@ -981,7 +981,7 @@ function TemplateForm({
         </div>
       )}
 
-      <div className="grid gap-3 sm:grid-cols-2">
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
         {(() => {
           return fields.map((f, i) => {
             const st = states[i];
@@ -993,11 +993,11 @@ function TemplateForm({
             return (
               <Fragment key={f.key}>
                 {showHeader && (
-                  <div className="sm:col-span-2 mt-1 border-b border-border pb-1 text-[11px] font-semibold uppercase tracking-wide text-ink-3">
+                  <div className="sm:col-span-2 mt-1 border-b border-border pb-1 text-[11px] font-semibold uppercase tracking-wide text-ink-3 xl:col-span-3">
                     {f.group}
                   </div>
                 )}
-                <div className={isBool ? "sm:col-span-2" : undefined}>
+                <div className={isBool ? "sm:col-span-2 xl:col-span-3" : undefined}>
                   <div className="mb-1 flex items-center justify-between gap-2">
                     <span className="flex items-center gap-1.5 text-xs font-medium text-ink-2">
                       {f.label} {f.required && <span className="text-bad">*</span>}
