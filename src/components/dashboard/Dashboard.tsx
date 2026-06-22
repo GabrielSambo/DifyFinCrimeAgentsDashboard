@@ -1,18 +1,34 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { RISK_META, riskRank, type Client, type ClientsResponse, type RiskStatus } from "@/lib/clients";
+import { riskRank, type Client, type ClientsResponse } from "@/lib/clients";
+import type { DocStatus } from "@/lib/documents";
 import { Spinner, TrafficLight, ReviewBadge } from "@/components/ui/atoms";
 import { formatDate } from "@/lib/format";
 
-function RiskChip({ risk }: { risk: RiskStatus }) {
-  const m = RISK_META[risk];
-  const tone =
-    m.tone === "bad" ? "bg-bad-bg text-bad" : m.tone === "warn" ? "bg-warn-bg text-warn" : m.tone === "good" ? "bg-good-bg text-good" : "bg-surface-2 text-ink-3";
+/** Document-completeness chip — the portfolio's headline status is "are the documents in and good?". */
+function DocChip({ ds }: { ds?: DocStatus | null }) {
+  const base = "inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium";
+  if (!ds || ds.source === "none" || ds.total === 0) {
+    return (
+      <span className={`${base} bg-surface-2 text-ink-3`}>
+        <span className="h-1.5 w-1.5 rounded-full bg-ink-3" />
+        No documents requested
+      </span>
+    );
+  }
+  if (ds.outstanding.length === 0) {
+    return (
+      <span className={`${base} bg-good-bg text-good`}>
+        <span className="h-1.5 w-1.5 rounded-full bg-good" />
+        Documents complete
+      </span>
+    );
+  }
   return (
-    <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium ${tone}`}>
-      <span className={`h-1.5 w-1.5 rounded-full ${m.dot}`} />
-      {m.label}
+    <span className={`${base} bg-warn-bg text-warn`}>
+      <span className="h-1.5 w-1.5 rounded-full bg-warn" />
+      {ds.outstanding.length} outstanding
     </span>
   );
 }
@@ -54,7 +70,6 @@ export function Dashboard({ onOpenClient }: { onOpenClient: (c: Client) => void 
   }, [load]);
 
   const clients = [...(data?.clients ?? [])].sort((a, b) => riskRank(a.risk) - riskRank(b.risk));
-  const count = (r: RiskStatus) => clients.filter((c) => c.risk === r).length;
 
   // Lifecycle segmentation: new clients live in onboarding, existing in remediation (2026-06-06 daily).
   const nNew = clients.filter((c) => c.client_type === "new").length;
@@ -76,7 +91,7 @@ export function Dashboard({ onOpenClient }: { onOpenClient: (c: Client) => void 
         <div>
           <h2 className="text-lg font-semibold tracking-tight text-ink">Client portfolio</h2>
           <p className="mt-0.5 text-sm text-ink-3">
-            Every onboarded client, screened and monitored. Open a case to trace ownership or remediate.
+            Every onboarded client, with live document status and ongoing monitoring. Open a case to trace ownership or remediate.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -98,19 +113,11 @@ export function Dashboard({ onOpenClient }: { onOpenClient: (c: Client) => void 
         </div>
       </div>
 
-      {/* KYC-screening stat tiles */}
-      <div className="mt-5 mb-1.5 text-[11px] font-medium uppercase tracking-wide text-ink-3">Risk screening</div>
+      {/* Portfolio stat tiles — document-completeness is the headline, not screening. */}
+      <div className="mt-5 mb-1.5 text-[11px] font-medium uppercase tracking-wide text-ink-3">Portfolio</div>
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <StatTile label="Total clients" value={clients.length} />
-        <StatTile label="PEP / sanctions alerts" value={count("alert")} tone={count("alert") ? "bad" : "default"} />
-        <StatTile label="Needs review" value={count("review")} tone={count("review") ? "warn" : "default"} />
-        <StatTile label="Cleared" value={count("cleared")} tone="good" />
-      </div>
-
-      {/* Document-status stat tiles — same 4-col grid so column edges line up with the row above */}
-      <div className="mt-4 mb-1.5 text-[11px] font-medium uppercase tracking-wide text-ink-3">Documents</div>
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <StatTile label="Docs pending" value={docPending} tone={docPending ? "warn" : "default"} />
+        <StatTile label="Docs outstanding" value={docPending} tone={docPending ? "warn" : "default"} />
         <StatTile label="Docs requested" value={docRequested} />
         <StatTile label="Docs complete" value={docComplete} tone="good" />
       </div>
@@ -141,11 +148,11 @@ export function Dashboard({ onOpenClient }: { onOpenClient: (c: Client) => void 
         <div className="grid grid-cols-[1.6fr_0.6fr_1.1fr_2.5rem_2.5rem_2.5rem_7rem] gap-3 border-b border-border bg-surface-2/50 px-5 py-2.5 text-[11px] font-medium uppercase tracking-wide text-ink-3">
           <div>Client</div>
           <div>Type</div>
-          <div>KYC Screening</div>
+          <div>Documents</div>
           <div className="text-center" title="Documents requested">Req</div>
           <div className="text-center" title="Documents received">Recv</div>
           <div className="text-center" title="Documents validated">Valid</div>
-          <div className="text-right">Last screened</div>
+          <div className="text-right">Review</div>
         </div>
 
         {loading && !data ? (
@@ -174,9 +181,13 @@ export function Dashboard({ onOpenClient }: { onOpenClient: (c: Client) => void 
               </div>
               <div className="min-w-0 truncate text-xs text-ink-3">{c.profile === "PF" ? "Individual" : "Company"}</div>
               <div className="min-w-0">
-                <RiskChip risk={c.risk} />
-                {c.screening_summary && (
-                  <div className="mt-1 truncate text-xs text-ink-3">{c.screening_summary}</div>
+                <DocChip ds={c.docStatus} />
+                {c.docStatus && c.docStatus.total > 0 && (
+                  <div className="mt-1 truncate text-xs text-ink-3">
+                    {c.docStatus.outstanding.length === 0
+                      ? `${c.docStatus.total} document(s) on file`
+                      : c.docStatus.outstanding.slice(0, 2).join(", ")}
+                  </div>
                 )}
               </div>
               <div className="flex h-5 items-center justify-center"><TrafficLight state={c.docStatus?.requestedLight ?? "unknown"} title="Requested" /></div>

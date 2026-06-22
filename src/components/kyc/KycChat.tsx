@@ -16,6 +16,7 @@ import { UboResults } from "@/components/ubo/UboResults";
 import { Spinner } from "@/components/ui/atoms";
 import { suggestionsFromUbo, attributeForField, type FieldSuggestion } from "@/lib/ubo-to-template";
 import { parseSse } from "@/lib/sse";
+import { HIDE_SCREENING } from "@/lib/flags";
 import { friendlyError, codeFromStatus, type KycErrorCode } from "@/lib/kycErrors";
 import { useEscalatingStatus } from "@/components/kyc/useEscalatingStatus";
 
@@ -759,7 +760,7 @@ function TemplateForm({
       company: known.client_name.trim(),
       jurisdiction: known.country ?? "United Kingdom",
       depth: 3,
-      flags: { include_ownership: true, include_adverse_media: true, include_screening: true },
+      flags: { include_ownership: true, include_adverse_media: true, include_screening: !HIDE_SCREENING },
     });
   }
 
@@ -942,7 +943,7 @@ function TemplateForm({
         <div className="mb-3 rounded-lg border border-border bg-surface-2/50 p-2.5">
           <div className="flex items-center gap-2 text-xs font-medium text-ink-2">
             <Spinner className="text-brand" />
-            {ubo.state === "resolving" ? "Resolving the entity in the registries…" : "Pulling company details, ownership & screening…"}
+            {ubo.state === "resolving" ? "Resolving the entity in the registries…" : "Pulling company details & ownership…"}
           </div>
           {ubo.progress.length > 0 && (
             <ul className="mt-1.5 space-y-1">
@@ -1090,10 +1091,10 @@ function TemplateForm({
         {suggestedCount > 0 && <span className="text-[11px] text-ink-3">{suggestedCount} field(s) still to review</span>}
       </div>
 
-      {/* Enrichment block — UBOs / ownership / directors / screening from the same lookup. */}
+      {/* Enrichment block — UBOs / ownership / directors from the same lookup. */}
       {ubo.payload && (
         <div className="mt-4">
-          <div className="mb-2 text-[11px] font-medium uppercase tracking-wide text-ink-3">Ownership &amp; screening</div>
+          <div className="mb-2 text-[11px] font-medium uppercase tracking-wide text-ink-3">Ownership</div>
           <UboResults payload={ubo.payload} />
         </div>
       )}

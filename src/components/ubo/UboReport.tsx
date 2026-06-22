@@ -5,6 +5,7 @@ import type { Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { UboReportHeader } from "@/lib/types";
 import { isSectionHeading, slugify, tocFromMarkdown } from "@/lib/ubo-report";
+import { HIDE_SCREENING } from "@/lib/flags";
 import { Mermaid } from "./Mermaid";
 
 /* ---------- helpers ---------- */
@@ -76,7 +77,7 @@ function HeaderStrip({ header }: { header: UboReportHeader }) {
           )}
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <ScreeningChip header={header} />
+          {!HIDE_SCREENING && <ScreeningChip header={header} />}
           <StatusBadge status={header.status} />
         </div>
       </div>

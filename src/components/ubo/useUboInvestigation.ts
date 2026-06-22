@@ -5,6 +5,7 @@ import type { UboReportResult, DisambigCandidate, UboPayload, ScreenSummary } fr
 import { deriveRisk } from "@/lib/risk";
 import { persistCdd, nowIso } from "@/lib/persist-client";
 import { parseSse } from "@/lib/sse";
+import { HIDE_SCREENING } from "@/lib/flags";
 
 /*
   The UBO investigation run state machine, extracted from UboPanel so the standalone
@@ -31,7 +32,8 @@ export interface UboFlags {
 const DEFAULT_FLAGS: UboFlags = {
   include_ownership: true,
   include_adverse_media: true,
-  include_screening: true,
+  // PEP/sanctions screening is out of scope (HIDE_SCREENING) — don't run it on the UBO agent.
+  include_screening: !HIDE_SCREENING,
 };
 
 export interface UseUboInvestigation {

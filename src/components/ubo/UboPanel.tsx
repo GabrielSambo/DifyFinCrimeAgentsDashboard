@@ -6,6 +6,7 @@ import { UboReport } from "./UboReport";
 import { UboResults } from "./UboResults";
 import { UboCandidates } from "./UboCandidates";
 import { Spinner } from "@/components/ui/atoms";
+import { HIDE_SCREENING } from "@/lib/flags";
 import { useUboInvestigation, type UboFlags } from "./useUboInvestigation";
 
 const JURISDICTIONS = [
@@ -41,9 +42,10 @@ export function UboPanel({ prefill }: { prefill?: UboPrefill }) {
   const depth = 3; // fixed default; no UI control (kyc_lite runs at depth 3)
 
   // Capability toggles → include_* flags on the UBO agent. Default on (omitted ⇒ runs).
+  // PEP/sanctions screening is gated out of scope (HIDE_SCREENING) — defaults off and the toggle is hidden.
   const [includeOwnership, setIncludeOwnership] = useState(true);
   const [includeAdverseMedia, setIncludeAdverseMedia] = useState(true);
-  const [includeScreening, setIncludeScreening] = useState(true);
+  const [includeScreening, setIncludeScreening] = useState(!HIDE_SCREENING);
 
   const flags: UboFlags = {
     include_ownership: includeOwnership,
@@ -79,7 +81,7 @@ export function UboPanel({ prefill }: { prefill?: UboPrefill }) {
         <h2 className="text-sm font-semibold text-ink">Beneficial-ownership investigation</h2>
         <p className="mt-0.5 text-xs text-ink-3">
           Resolves the entity against official registries, then traces the ownership chain to the
-          ultimate beneficial owner and screens every party.
+          ultimate beneficial owner.
         </p>
         <form
           className="mt-4 grid gap-3 sm:grid-cols-[1fr_auto_auto]"
@@ -140,15 +142,17 @@ export function UboPanel({ prefill }: { prefill?: UboPrefill }) {
             />
             Adverse media
           </label>
-          <label className="flex cursor-pointer select-none items-center gap-2">
-            <input
-              type="checkbox"
-              checked={includeScreening}
-              onChange={(e) => setIncludeScreening(e.target.checked)}
-              className="h-4 w-4 accent-brand"
-            />
-            PEP / sanctions screening
-          </label>
+          {!HIDE_SCREENING && (
+            <label className="flex cursor-pointer select-none items-center gap-2">
+              <input
+                type="checkbox"
+                checked={includeScreening}
+                onChange={(e) => setIncludeScreening(e.target.checked)}
+                className="h-4 w-4 accent-brand"
+              />
+              PEP / sanctions screening
+            </label>
+          )}
         </div>
 
         {ubo.state === "idle" && (

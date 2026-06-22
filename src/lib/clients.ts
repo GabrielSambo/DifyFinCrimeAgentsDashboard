@@ -52,31 +52,17 @@ export interface ClientsResponse {
 }
 
 export const RISK_META: Record<RiskStatus, { label: string; tone: "good" | "warn" | "bad" | "default"; dot: string }> = {
-  alert: { label: "PEP / Sanctions alert", tone: "bad", dot: "bg-bad" },
+  alert: { label: "Risk alert", tone: "bad", dot: "bg-bad" },
   review: { label: "Needs review", tone: "warn", dot: "bg-warn" },
   cleared: { label: "Cleared", tone: "good", dot: "bg-good" },
   pending: { label: "Onboarding", tone: "default", dot: "bg-ink-3" },
 };
 
 /*
-  Demo portfolio. Includes the two clients actually created against the live sandbox
-  during Phase C testing (PEPTEST-001 → Putin → alert; CLEANTEST-002 → cleared), plus
+  Demo portfolio. Includes CLEANTEST-002 (created against the live sandbox during testing) plus
   representative company clients so the ownership/remediation views tell a full story.
 */
 export const DEMO_CLIENTS: Client[] = [
-  {
-    client_id: "PEPTEST-001",
-    full_name: "Vladimir Putin",
-    profile: "PF",
-    client_type: "existing",
-    jurisdiction: "Russia",
-    created_at: "2026-06-16",
-    risk: "alert",
-    screening_summary: "PEP · Sanctioned · Debarred (score 1.0)",
-    last_screened: "2026-06-16",
-    review_due_in_days: -2,
-    data: { Nationality: "Russian", "Country of Residence": "Russia", "Economic Activity": "Government" },
-  },
   {
     client_id: "ALDI-UK-014",
     full_name: "ALDI STORES LIMITED",

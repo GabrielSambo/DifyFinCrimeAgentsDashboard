@@ -1,5 +1,6 @@
 import type { UboPayload, Ubo, ChainNode } from "@/lib/types";
 import { ConfidenceBadge, ScreeningPill, SectionCard, Stat, SourceLinks } from "@/components/ui/atoms";
+import { HIDE_SCREENING } from "@/lib/flags";
 
 /* ---------- Target identity ---------- */
 
@@ -26,7 +27,7 @@ function TargetHeader({ p }: { p: UboPayload }) {
           <h2 className="mt-1 text-xl font-semibold tracking-tight text-ink">{t.name}</h2>
           {t.economic_activity && <p className="mt-1 text-sm text-ink-2">{t.economic_activity}</p>}
         </div>
-        {t.screening?.status && <ScreeningPill status={t.screening.status} />}
+        {!HIDE_SCREENING && t.screening?.status && <ScreeningPill status={t.screening.status} />}
       </div>
       <dl className="mt-4 grid grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-3">
         {facts
@@ -179,7 +180,7 @@ function UboCard({ u }: { u: Ubo }) {
         <p className="mt-2.5 text-xs leading-relaxed text-ink-2">{u.ownership_basis}</p>
       )}
       <div className="mt-2.5 flex items-center justify-between gap-3">
-        <ScreeningPill status={u.screening?.status} />
+        {!HIDE_SCREENING ? <ScreeningPill status={u.screening?.status} /> : <span />}
         <SourceLinks urls={u.source_urls} />
       </div>
     </div>
@@ -279,7 +280,7 @@ export function UboResults({ payload }: { payload: UboPayload }) {
         </div>
       )}
 
-      <ScreeningSummary p={payload} />
+      {!HIDE_SCREENING && <ScreeningSummary p={payload} />}
 
       <div className="grid gap-4 lg:grid-cols-2">
         <OwnershipChain p={payload} />

@@ -11,7 +11,7 @@ import { useEffect, useState } from "react";
 
 const STEPS: ReadonlyArray<{ at: number; label: string }> = [
   { at: 8_000, label: "Thinking…" },
-  { at: 20_000, label: "Running ownership & screening checks (this can take a bit)…" },
+  { at: 20_000, label: "Running ownership checks (this can take a bit)…" },
   { at: 40_000, label: "Still working — almost there…" },
 ];
 

@@ -23,7 +23,7 @@ const NAV: { id: Tab; label: string; icon: ReactNode }[] = [
   },
   {
     id: "ownership",
-    label: "Ownership & Screening",
+    label: "Ownership",
     icon: <path d="M12 3v4M5 21v-4a2 2 0 012-2h10a2 2 0 012 2v4M5 21h4M15 21h4M10 7h4v3h-4V7zM3 17h4v4H3v-4zM17 17h4v4h-4v-4z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />,
   },
   {
@@ -34,11 +34,11 @@ const NAV: { id: Tab; label: string; icon: ReactNode }[] = [
 ];
 
 const TITLES: Record<Tab, { title: string; subtitle: string }> = {
-  dashboard: { title: "Dashboard", subtitle: "Client portfolio & risk overview" },
+  dashboard: { title: "Dashboard", subtitle: "Client portfolio & document status" },
   onboarding: { title: "KYC Assistant", subtitle: "Onboard new clients & review existing ones" },
   profile: { title: "Client Profile", subtitle: "Consolidated due-diligence record" },
-  ownership: { title: "Ownership & Screening", subtitle: "Beneficial-ownership tracing & PEP/sanctions" },
-  remediation: { title: "Remediation", subtitle: "Periodic re-screening & ongoing monitoring" },
+  ownership: { title: "Ownership", subtitle: "Beneficial-ownership tracing" },
+  remediation: { title: "Remediation", subtitle: "Document remediation & ongoing monitoring" },
 };
 
 export function Workspace() {
@@ -121,7 +121,7 @@ export function Workspace() {
         </nav>
 
         <div className="border-t border-border px-5 py-3 text-[11px] text-ink-3">
-          Sandbox · live registry, sanctions &amp; persistence
+          Sandbox · live registry &amp; persistence
         </div>
       </aside>
 

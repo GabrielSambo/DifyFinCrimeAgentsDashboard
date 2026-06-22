@@ -9,6 +9,7 @@ import { persistCdd } from "@/lib/persist-client";
 import { formatDate } from "@/lib/format";
 import { reviewStatus } from "@/lib/review";
 import { docExpiry, EXPIRY_DAYS } from "@/lib/documents";
+import { HIDE_SCREENING } from "@/lib/flags";
 
 function RiskHeader({ client }: { client: Client }) {
   const status = client.cdd?.risk_status ?? client.risk;
@@ -30,9 +31,9 @@ function RiskHeader({ client }: { client: Client }) {
           {m.label}
         </span>
       </div>
-      <p className="mt-3 text-sm text-ink-2">{client.cdd?.risk_summary ?? client.screening_summary ?? "Not yet screened."}</p>
+      <p className="mt-3 text-sm text-ink-2">{client.cdd?.risk_summary ?? client.screening_summary ?? "Not yet reviewed."}</p>
       <div className="mt-1 text-xs text-ink-3">
-        Last screened: {client.cdd?.last_screened_at || client.last_screened ? formatDate(client.cdd?.last_screened_at ?? client.last_screened) : "never"}
+        Last reviewed: {client.cdd?.last_screened_at || client.last_screened ? formatDate(client.cdd?.last_screened_at ?? client.last_screened) : "never"}
       </div>
     </div>
   );
@@ -86,7 +87,7 @@ function ReviewCadenceCard({ client }: { client: Client }) {
         {error && <span className="text-xs text-bad">{error}</span>}
       </div>
       {!anchor && (
-        <p className="mt-2 text-xs text-ink-3">Not screened yet — the due date starts counting from the first screening.</p>
+        <p className="mt-2 text-xs text-ink-3">Not reviewed yet — the due date starts counting from the first review.</p>
       )}
     </SectionCard>
   );
@@ -237,10 +238,14 @@ export function ClientProfile({
     <div className="mx-auto max-w-5xl space-y-4 px-6 py-6">
       <RiskHeader client={client} />
 
-      <div className="grid gap-4 lg:grid-cols-2">
+      {HIDE_SCREENING ? (
         <IdentityCard client={client} />
-        <ScreeningCard client={client} />
-      </div>
+      ) : (
+        <div className="grid gap-4 lg:grid-cols-2">
+          <IdentityCard client={client} />
+          <ScreeningCard client={client} />
+        </div>
+      )}
 
       <ReviewCadenceCard client={client} />
 
@@ -268,8 +273,8 @@ export function ClientProfile({
         ) : (
           <p className="text-sm text-ink-3">
             {isCompany
-              ? "Run a beneficial-ownership investigation to trace this company's UBOs and screen every party."
-              : "Beneficial-ownership tracing applies to company clients. This individual is screened directly (see Screening above)."}
+              ? "Run a beneficial-ownership investigation to trace this company's UBOs."
+              : "Beneficial-ownership tracing applies to company clients."}
           </p>
         )}
       </SectionCard>
