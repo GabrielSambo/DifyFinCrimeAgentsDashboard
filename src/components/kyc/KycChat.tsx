@@ -16,6 +16,8 @@ import { UboResults } from "@/components/ubo/UboResults";
 import { Spinner } from "@/components/ui/atoms";
 import { suggestionsFromUbo, attributeForField, type FieldSuggestion } from "@/lib/ubo-to-template";
 import { parseSse } from "@/lib/sse";
+import { friendlyError, codeFromStatus, type KycErrorCode } from "@/lib/kycErrors";
+import { useEscalatingStatus } from "@/components/kyc/useEscalatingStatus";
 
 interface Msg {
   role: "assistant" | "user";
@@ -51,7 +53,7 @@ export function KycChat() {
   const [messages, setMessages] = useState<Msg[]>([{ role: "assistant", text: GREETING }]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<{ code: KycErrorCode; technical?: string } | null>(null);
 
   // Intake form
   const [fName, setFName] = useState("");
@@ -73,6 +75,8 @@ export function KycChat() {
   const formInputs = useRef<Record<string, unknown> | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  // The last query actually sent — lets "Try again" re-run the same turn without re-typing.
+  const lastQueryRef = useRef<string>("");
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
@@ -85,6 +89,20 @@ export function KycChat() {
     setError(null);
     setPhase("chat");
     setMessages((m) => [...m, { role: "user", text: display ?? clean }, { role: "assistant", text: "" }]);
+    await runTurn(clean);
+  }
+
+  // Re-run the last turn (after a failure) without appending a duplicate user bubble.
+  function retry() {
+    if (busy || !lastQueryRef.current) return;
+    setError(null);
+    setMessages((m) => [...m, { role: "assistant", text: "" }]);
+    void runTurn(lastQueryRef.current);
+  }
+
+  // Owns the network turn: assumes the trailing message is the empty assistant bubble to fill.
+  async function runTurn(clean: string) {
+    lastQueryRef.current = clean;
     setBusy(true);
 
     const inputs = formInputs.current ?? {};
@@ -95,7 +113,11 @@ export function KycChat() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ query: clean, inputs, conversationId: convId.current || undefined }),
       });
-      if (!res.ok || !res.body) throw new Error(`Request failed (${res.status})`);
+      // A non-2xx here is the Vercel hard-kill path (no SSE code) — infer one from the status.
+      if (!res.ok || !res.body) {
+        setError({ code: codeFromStatus(res.status), technical: `HTTP ${res.status}` });
+        return;
+      }
 
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
@@ -132,12 +154,13 @@ export function KycChat() {
               });
             }
           } else if (ev.event === "error") {
-            setError((ev.data as { message: string }).message);
+            const d = ev.data as { message?: string; code?: KycErrorCode };
+            setError({ code: d.code ?? "error", technical: d.message });
           }
         }
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Network error");
+      setError({ code: "network", technical: e instanceof Error ? e.message : String(e) });
     } finally {
       setBusy(false);
       setMessages((m) =>
@@ -188,6 +211,12 @@ export function KycChat() {
     return -1;
   }, [messages]);
 
+  // Escalating "still working" copy for a long turn (KYC streams nothing until its final answer,
+  // so this is timed reassurance, not live phases). Clears the moment the first token streams.
+  const lastMsg = messages[messages.length - 1];
+  const waitingHasText = lastMsg?.role === "assistant" ? lastMsg.text.length > 0 : true;
+  const statusLabel = useEscalatingStatus(busy, waitingHasText);
+
   return (
     <div className="mx-auto flex h-full max-w-2xl flex-col px-6">
       <div ref={scrollRef} className="flex-1 space-y-4 overflow-y-auto py-6">
@@ -219,7 +248,16 @@ export function KycChat() {
                       : "rounded-2xl rounded-bl-sm border border-border bg-surface px-4 py-2.5 text-sm leading-relaxed text-ink"
                   }
                 >
-                  {m.text ? <Markdown text={m.text} /> : <TypingDots />}
+                  {m.text ? (
+                    <Markdown text={m.text} />
+                  ) : (
+                    <div className="flex items-center gap-2">
+                      <TypingDots />
+                      {i === lastAssistantIdx && statusLabel && (
+                        <span className="text-[11px] text-ink-3">{statusLabel}</span>
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 {/* Clickable options (envelope.ui.options) */}
@@ -321,9 +359,7 @@ export function KycChat() {
           </div>
         )}
 
-        {error && (
-          <div className="rounded-lg border border-bad/30 bg-bad-bg px-3 py-2 text-sm text-bad">{error}</div>
-        )}
+        {error && <ErrorCard error={error} busy={busy} onRetry={retry} />}
       </div>
 
       {/* "Check existing client" id prompt for the greeting-menu option. In the intro empty
@@ -1105,6 +1141,46 @@ function TypingDots() {
       {["0s", "0.2s", "0.4s"].map((d) => (
         <span key={d} className="h-1.5 w-1.5 rounded-full bg-ink-3 animate-veritas-pulse" style={{ animationDelay: d }} />
       ))}
+    </div>
+  );
+}
+
+/**
+ * Human, actionable error card. Maps the error `code` to plain-language copy (lib/kycErrors.ts),
+ * offers "Try again" when retryable, and tucks the raw status behind a collapsible for the team.
+ */
+function ErrorCard({
+  error,
+  busy,
+  onRetry,
+}: {
+  error: { code: KycErrorCode; technical?: string };
+  busy: boolean;
+  onRetry: () => void;
+}) {
+  const f = friendlyError(error.code, error.technical);
+  return (
+    <div className="rounded-lg border border-bad/30 bg-bad-bg px-3 py-2.5 text-sm text-bad">
+      <div className="font-medium">{f.title}</div>
+      <p className="mt-0.5 text-bad/90">{f.body}</p>
+      <div className="mt-2 flex items-center gap-3">
+        {f.canRetry && (
+          <button
+            type="button"
+            onClick={onRetry}
+            disabled={busy}
+            className="rounded-lg bg-brand px-3 py-1 text-xs font-medium text-white hover:bg-brand-600 disabled:opacity-40"
+          >
+            Try again
+          </button>
+        )}
+        {f.technical && (
+          <details className="text-[11px] text-bad/70">
+            <summary className="cursor-pointer select-none">Technical details</summary>
+            <span className="font-mono">{f.technical}</span>
+          </details>
+        )}
+      </div>
     </div>
   );
 }

@@ -20,6 +20,9 @@ export interface ChatRequest {
   inputs?: Record<string, unknown>;
   conversationId?: string;
   user: string;
+  /** Abort the upstream fetch (idle-timeout / cancellation). When it fires mid-stream the
+   *  reader rejects with AbortError, which the caller maps to a friendly timeout. */
+  signal?: AbortSignal;
 }
 
 /** A Dify streaming SSE event (advanced-chat mode). We only type the fields we use. */
@@ -56,6 +59,7 @@ export async function* streamChat(
       conversation_id: req.conversationId || undefined,
       user: req.user,
     }),
+    signal: req.signal,
   });
 
   if (!res.ok || !res.body) {
