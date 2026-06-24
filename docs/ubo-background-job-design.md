@@ -23,9 +23,11 @@ The current design ties the entire run to **one synchronous HTTP request** that 
 Server-Sent Events (SSE) until the agent finishes. That couples a multi-minute agent run to the
 request lifecycle, which breaks in three ways:
 
-1. **Serverless function timeouts.** Vercel Hobby hard-caps at **60s**; Pro at **300s**. A 236s run
-   fails on Hobby outright and is marginal on Pro. (`export const maxDuration = 300` only raises the
-   ceiling *up to the plan limit* — it cannot exceed it.)
+1. **Serverless function timeouts.** Vercel function duration is bounded by plan **and Fluid Compute**.
+   With Fluid Compute enabled (the current default), **Hobby and Pro both allow up to 300s**; with
+   Fluid Compute OFF, Hobby caps at **60s**. So a 236s run completes on Hobby *iff* Fluid Compute is
+   on (`maxDuration=300`). Any run that exceeds ~300s 504s regardless of plan — that's the hard wall
+   this design removes.
 2. **Connection fragility.** Any client refresh, navigation, or transient network drop kills the
    run — the in-flight report is lost (there is nothing to reconnect to).
 3. **Single-viewer.** Only the tab that started the run can see it. No other analyst, and no later
@@ -48,8 +50,9 @@ serverless timeouts beyond the plan cap, nor refresh-resilience. That is what th
 | Hosting / requirement | Synchronous (current) | Background job (this doc) |
 |---|---|---|
 | Non-serverless host (Render/Railway/Fly/VM, `next start`) | ✅ Works today | Optional (adds resilience) |
-| Vercel Pro, runs < ~4 min | ⚠️ Marginal | ✅ Recommended |
-| Vercel Hobby (60s) | ❌ Impossible | ✅ Required |
+| Vercel Hobby/Pro **with Fluid Compute**, runs < 300s | ✅ Works (`maxDuration=300`) | ✅ Recommended |
+| Any plan with Fluid Compute OFF (Hobby 60s) | ❌ Long runs 504 | ✅ Required |
+| Runs > 300s (heavy depth-3 + adverse media + screening) | ❌ 504 on every plan | ✅ Required |
 | Survive refresh / multiple viewers / audit trail of in-flight runs | ❌ | ✅ |
 
 **Bottom line:** if you self-host on a plain Node box, the current code already works. Adopt

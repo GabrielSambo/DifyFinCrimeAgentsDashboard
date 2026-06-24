@@ -8,9 +8,14 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 // Full UBO investigations routinely run 60s–3min (measured: a depth-2 ownership-only run is ~62s;
 // depth-3 with adverse-media + screening is longer). Raise the serverless cap accordingly.
-// NOTE: this is clamped by the hosting plan — Vercel Hobby hard-caps at 60s (long runs CANNOT
-// complete there), Pro allows 300s. On a non-serverless host (Render/Railway/VM) it's ignored.
-export const maxDuration = 300;
+// IMPORTANT: setting maxDuration ABOVE the plan limit FAILS THE BUILD (Vercel does not clamp).
+// Hobby's limit is 60s, or 300s only if Fluid Compute is enabled. We keep this at 60 so the deploy
+// ALWAYS succeeds on Hobby regardless of the Fluid Compute setting. Trade-off: a UBO run >60s (they
+// take ~60–240s) returns a runtime 504 on Hobby — a per-request timeout, NOT a deploy failure.
+// To run longer investigations: enable Fluid Compute (Settings → Functions) or move to Pro, THEN
+// raise this to 300 and redeploy. Non-serverless hosts ignore this. Runs >300s need the background
+// job (docs/ubo-background-job-design.md).
+export const maxDuration = 60;
 
 /*
   POST /api/ubo
