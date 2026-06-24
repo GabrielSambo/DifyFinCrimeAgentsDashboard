@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { riskRank, type Client, type ClientsResponse } from "@/lib/clients";
+import { docPhase } from "@/lib/documents";
 import { Spinner, ReviewBadge } from "@/components/ui/atoms";
 import { formatDate } from "@/lib/format";
 import { reviewStatus } from "@/lib/review";
@@ -109,15 +110,13 @@ function DocGroup({
         {title} ({count})
       </div>
       {labels.length > 0 ? (
-        <div className="mt-1.5 ml-3.5 flex flex-wrap gap-1.5">
+        <ul className="mt-1.5 ml-5 space-y-1">
           {labels.map((l, i) => (
-            <span key={i} className="rounded-md border border-border bg-surface px-2 py-0.5 text-xs text-ink-2">
-              {l}
-            </span>
+            <li key={i} className="text-xs text-ink-2">{l}</li>
           ))}
-        </div>
+        </ul>
       ) : (
-        emptyNote && <div className="mt-1 ml-3.5 text-xs text-ink-3">{emptyNote}</div>
+        emptyNote && <div className="mt-1 ml-5 text-xs text-ink-3">{emptyNote}</div>
       )}
     </div>
   );
@@ -157,11 +156,12 @@ export function Remediation() {
         fetchData,
         mode === "refresh" ? new Promise((r) => setTimeout(r, 700)) : Promise.resolve(),
       ]);
-      // Remediation only applies to existing clients — a brand-new client mid-onboarding has nothing to
-      // remediate (2026-06-06 daily). New clients live in the Onboarding/KYC view instead.
-      const existing = data.clients.filter((c) => c.client_type === "existing");
+      // The monitored book is document-based: any client with a tracked document footprint
+      // (docPhase !== "none") belongs here — the old client_type heuristic was unreliable. A client
+      // with no documents at all has nothing to remediate or monitor, so it's excluded.
+      const monitored = data.clients.filter((c) => docPhase(c.docStatus) !== "none");
       // Remediation queue: most documents outstanding first, then by risk.
-      const ordered = [...existing].sort(
+      const ordered = [...monitored].sort(
         (a, b) =>
           (b.docStatus?.outstanding.length ?? 0) - (a.docStatus?.outstanding.length ?? 0) ||
           riskRank(a.risk) - riskRank(b.risk),

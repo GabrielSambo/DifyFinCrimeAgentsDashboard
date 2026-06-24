@@ -6,8 +6,11 @@ import { normalizeUboPayload } from "@/lib/ubo-normalize";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-// UBO investigations stream for ~20-35s; raise above Vercel's short default so they don't time out.
-export const maxDuration = 60;
+// Full UBO investigations routinely run 60s–3min (measured: a depth-2 ownership-only run is ~62s;
+// depth-3 with adverse-media + screening is longer). Raise the serverless cap accordingly.
+// NOTE: this is clamped by the hosting plan — Vercel Hobby hard-caps at 60s (long runs CANNOT
+// complete there), Pro allows 300s. On a non-serverless host (Render/Railway/VM) it's ignored.
+export const maxDuration = 300;
 
 /*
   POST /api/ubo
@@ -66,10 +69,38 @@ export async function POST(request: Request) {
   const query = body.query || body.company || "Investigate UBO";
 
   const encoder = new TextEncoder();
+  // Abort the upstream Dify fetch if the client disconnects (so we don't leak a running agent).
+  const upstream = new AbortController();
+  let closed = false;
+  let heartbeat: ReturnType<typeof setInterval> | undefined;
+  // Idle gaps to the client were measured up to ~27s during agent "thinking"; many proxies/
+  // tunnels drop a connection idle for 30–60s. A clock-based heartbeat (independent of upstream
+  // activity) keeps it warm so the terminal event always reaches the client.
+  const HEARTBEAT_MS = 10_000;
+
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
-      const send = (event: string, data: unknown) =>
-        controller.enqueue(encoder.encode(sse(event, data)));
+      const enqueue = (chunk: Uint8Array) => {
+        if (closed) return;
+        try {
+          controller.enqueue(chunk);
+        } catch {
+          /* controller already closed by a cancel/disconnect — ignore */
+        }
+      };
+      const send = (event: string, data: unknown) => enqueue(encoder.encode(sse(event, data)));
+      const finish = () => {
+        if (closed) return;
+        closed = true;
+        if (heartbeat) clearInterval(heartbeat);
+        try {
+          controller.close();
+        } catch {
+          /* already closed */
+        }
+      };
+
+      heartbeat = setInterval(() => enqueue(encoder.encode(": ping\n\n")), HEARTBEAT_MS);
 
       let answer = "";
       let conversationId = body.conversationId || "";
@@ -82,15 +113,10 @@ export async function POST(request: Request) {
           inputs,
           conversationId: body.conversationId,
           user,
+          signal: upstream.signal,
         })) {
           if (ev.conversation_id) conversationId = ev.conversation_id;
           if (ev.message_id || ev.id) messageId = ev.message_id || ev.id || messageId;
-
-          // Heartbeat on every upstream event: full-mode synthesis can run for
-          // minutes while we emit no client-facing events, and an idle SSE
-          // stream may be dropped by an intermediary (proxy / tunnel). A comment
-          // line keeps the connection warm; the client parser ignores it.
-          controller.enqueue(encoder.encode(": ping\n\n"));
 
           if (ev.event === "message" && typeof ev.answer === "string") {
             answer += ev.answer;
@@ -103,7 +129,7 @@ export async function POST(request: Request) {
             }
           } else if (ev.event === "error") {
             send("error", { message: ev.message || "Agent error", code: "error" });
-            controller.close();
+            finish();
             return;
           }
         }
@@ -124,8 +150,13 @@ export async function POST(request: Request) {
             payload: normalizeUboPayload(payload),
           });
         }
-        controller.close();
+        finish();
       } catch (err) {
+        // A client disconnect aborts the upstream → AbortError; nothing to report, just clean up.
+        if ((err as Error)?.name === "AbortError") {
+          finish();
+          return;
+        }
         if (err instanceof DifyError && err.isUnavailable) {
           send("error", {
             message:
@@ -138,8 +169,14 @@ export async function POST(request: Request) {
             code: "error",
           });
         }
-        controller.close();
+        finish();
       }
+    },
+    cancel() {
+      // Client went away (navigation / refresh / network drop): stop pinging and abort Dify.
+      closed = true;
+      if (heartbeat) clearInterval(heartbeat);
+      upstream.abort();
     },
   });
 

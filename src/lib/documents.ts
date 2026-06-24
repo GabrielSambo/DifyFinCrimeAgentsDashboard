@@ -242,6 +242,40 @@ export function deriveDocStatus(
   };
 }
 
+/*
+  Client-level document PHASE — the single headline status for the portfolio (replaces the old
+  3-light Requested/Received/Validated split). Derived purely from `outstanding` vs `total`, so it
+  inherits the expiry rule for free (a stale validated doc is already in `outstanding`, so a fully-
+  validated-but-stale client correctly drops Validated → Pending).
+
+    validated  all docs validated & current      (outstanding == 0)
+    pending    some but not all validated         (0 < outstanding < total)
+    requested  none validated yet                 (outstanding == total)
+    none       nothing requested / no data        (total == 0)
+*/
+export type DocPhase = "validated" | "pending" | "requested" | "none";
+
+export function docPhase(ds?: DocStatus | null): DocPhase {
+  if (!ds || ds.total === 0 || ds.source === "none") return "none";
+  if (ds.outstanding.length === 0) return "validated";
+  if (ds.outstanding.length >= ds.total) return "requested";
+  return "pending";
+}
+
+/** Documents validated AND current (= total − outstanding). Works for both data sources. */
+export function validatedCount(ds?: DocStatus | null): number {
+  if (!ds || ds.total === 0) return 0;
+  return Math.max(0, ds.total - ds.outstanding.length);
+}
+
+/** Phase → label + tone. Tone keys map to the surface's good/warn/bad/neutral palette. */
+export const DOC_PHASE_META: Record<DocPhase, { label: string; tone: "good" | "warn" | "bad" | "neutral" }> = {
+  validated: { label: "Validated", tone: "good" },
+  pending: { label: "Pending", tone: "warn" },
+  requested: { label: "Requested", tone: "bad" },
+  none: { label: "No documents", tone: "neutral" },
+};
+
 /** Compose a default, editable RFI draft email from the outstanding-docs list (pure; no network). */
 export function composeRfiDraft(
   clientName: string,

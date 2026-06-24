@@ -1,4 +1,4 @@
-import type { Cdd, CddHistoryEntry } from "@/lib/types";
+import type { Cdd, CddHistoryEntry, UboReportRecord } from "@/lib/types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -16,6 +16,7 @@ export const dynamic = "force-dynamic";
 const URL = process.env.SUPABASE_URL?.trim().replace(/\/$/, "");
 const KEY = process.env.SUPABASE_SERVICE_KEY?.trim();
 const HISTORY_CAP = 20;
+const REPORTS_CAP = 50;
 
 function headers() {
   return { apikey: KEY!, Authorization: `Bearer ${KEY!}`, "Content-Type": "application/json" };
@@ -46,6 +47,8 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
 interface PatchBody {
   cddPatch?: Partial<Cdd>;
   appendHistory?: CddHistoryEntry;
+  /** Append one saved ownership report to cdd.ubo_reports (newest first, capped). */
+  appendUboReport?: UboReportRecord;
 }
 
 export async function PATCH(request: Request, ctx: { params: Promise<{ id: string }> }) {
@@ -67,9 +70,13 @@ export async function PATCH(request: Request, ctx: { params: Promise<{ id: strin
       ...prevCdd,
       ...body.cddPatch,
       history: prevCdd.history ?? [],
+      ubo_reports: prevCdd.ubo_reports ?? [],
     };
     if (body.appendHistory) {
       mergedCdd.history = [body.appendHistory, ...(prevCdd.history ?? [])].slice(0, HISTORY_CAP);
+    }
+    if (body.appendUboReport) {
+      mergedCdd.ubo_reports = [body.appendUboReport, ...(prevCdd.ubo_reports ?? [])].slice(0, REPORTS_CAP);
     }
 
     const nextData = { ...data, cdd: mergedCdd };

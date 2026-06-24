@@ -2,12 +2,13 @@
 
 import { useEffect, useState } from "react";
 import type { ScreenSummary } from "@/lib/types";
+import type { Client, ClientsResponse } from "@/lib/clients";
 import { UboReport } from "./UboReport";
 import { UboResults } from "./UboResults";
 import { UboCandidates } from "./UboCandidates";
 import { Spinner } from "@/components/ui/atoms";
 import { HIDE_SCREENING } from "@/lib/flags";
-import { useUboInvestigation, type UboFlags } from "./useUboInvestigation";
+import { useUboInvestigation, type UboFlags, type UseUboInvestigation } from "./useUboInvestigation";
 
 const JURISDICTIONS = [
   "United Kingdom",
@@ -34,6 +35,88 @@ export interface UboPrefill {
   clientId?: string;
   /** the client's latest screening summary, so persisting UBO doesn't downgrade a screening alert. */
   priorScreening?: ScreenSummary | null;
+}
+
+/**
+ * Explicit "Save to profile" bar shown under a completed full-mode report. When the run was
+ * launched from a client profile (prefill.clientId) it's pre-targeted to that client; for an
+ * ad-hoc run it offers a client picker so the report can be attached to an existing profile.
+ */
+function SaveReportBar({ ubo, prefill }: { ubo: UseUboInvestigation; prefill?: UboPrefill }) {
+  const linkedId = prefill?.clientId ?? null;
+  const [clients, setClients] = useState<Client[]>([]);
+  const [picked, setPicked] = useState("");
+
+  // Ad-hoc runs need a client to attach to — load the portfolio for the picker.
+  useEffect(() => {
+    if (linkedId) return;
+    let on = true;
+    fetch("/api/clients", { cache: "no-store" })
+      .then((r) => r.json())
+      .then((d: ClientsResponse) => {
+        if (on) setClients(d.clients);
+      })
+      .catch(() => {});
+    return () => {
+      on = false;
+    };
+  }, [linkedId]);
+
+  const targetId = linkedId ?? picked;
+  const saved = ubo.saveState === "saved";
+  const targetName = linkedId
+    ? prefill?.company
+    : clients.find((c) => c.client_id === picked)?.full_name;
+
+  return (
+    <div className="mt-4 rounded-xl border border-border bg-surface p-4">
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="min-w-0">
+          <div className="text-sm font-medium text-ink">Save this report to a client profile</div>
+          <div className="text-xs text-ink-3">
+            {linkedId
+              ? <>Will be saved to <span className="font-medium text-ink-2">{prefill?.company}</span></>
+              : "Attach this ownership report to an existing client."}
+          </div>
+        </div>
+
+        <div className="ml-auto flex items-center gap-2">
+          {!linkedId && (
+            <select
+              value={picked}
+              onChange={(e) => setPicked(e.target.value)}
+              disabled={saved}
+              className="max-w-[220px] rounded-lg border border-border-strong bg-surface px-3 py-2 text-sm text-ink outline-none focus:border-brand focus:ring-2 focus:ring-brand/15 disabled:opacity-50"
+            >
+              <option value="">Select a client…</option>
+              {clients.map((c) => (
+                <option key={c.client_id} value={c.client_id}>
+                  {c.full_name}
+                </option>
+              ))}
+            </select>
+          )}
+          <button
+            onClick={() => targetId && ubo.saveReport(targetId)}
+            disabled={!targetId || ubo.saveState === "saving" || saved}
+            className="inline-flex h-[38px] items-center gap-2 rounded-lg bg-brand px-4 text-sm font-medium text-white transition-colors hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {ubo.saveState === "saving" ? <Spinner /> : null}
+            {saved ? "Saved ✓" : "Save to profile"}
+          </button>
+        </div>
+      </div>
+
+      {saved && (
+        <p className="mt-2 text-xs font-medium text-good">
+          Saved to {targetName ?? "the client profile"}. It will appear under their Beneficial-ownership reports.
+        </p>
+      )}
+      {ubo.saveState === "error" && (
+        <p className="mt-2 text-xs font-medium text-bad">Could not save the report. Please try again.</p>
+      )}
+    </div>
+  );
 }
 
 export function UboPanel({ prefill }: { prefill?: UboPrefill }) {
@@ -238,9 +321,12 @@ export function UboPanel({ prefill }: { prefill?: UboPrefill }) {
         </div>
       )}
       {ubo.state === "done" && !ubo.payload && ubo.result?.markdown && (
-        <div className="mt-4">
-          <UboReport markdown={ubo.result.markdown} header={ubo.result.header} />
-        </div>
+        <>
+          <SaveReportBar ubo={ubo} prefill={prefill} />
+          <div className="mt-4">
+            <UboReport markdown={ubo.result.markdown} header={ubo.result.header} />
+          </div>
+        </>
       )}
     </div>
   );

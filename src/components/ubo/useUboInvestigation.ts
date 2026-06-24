@@ -1,9 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import type { UboReportResult, DisambigCandidate, UboPayload, ScreenSummary } from "@/lib/types";
+import type { UboReportResult, DisambigCandidate, UboPayload, ScreenSummary, UboReportRecord } from "@/lib/types";
 import { deriveRisk } from "@/lib/risk";
-import { persistCdd, nowIso } from "@/lib/persist-client";
+import { persistCdd, saveUboReport, nowIso } from "@/lib/persist-client";
 import { parseSse } from "@/lib/sse";
 import { HIDE_SCREENING } from "@/lib/flags";
 
@@ -22,6 +22,9 @@ import { HIDE_SCREENING } from "@/lib/flags";
 type DoneData = UboReportResult & { payload?: UboPayload | null };
 
 export type UboRunState = "idle" | "resolving" | "choosing" | "running" | "done" | "error";
+
+/** Status of an explicit "Save to profile" action for the current full-mode report. */
+export type UboSaveState = "idle" | "saving" | "saved" | "error";
 
 export interface UboFlags {
   include_ownership: boolean;
@@ -44,6 +47,12 @@ export interface UseUboInvestigation {
   error: string | null;
   candidates: DisambigCandidate[];
   choiceNonce: number;
+  /** Save-to-profile status for the current full-mode report (explicit user action). */
+  saveState: UboSaveState;
+  /** The client id the current report was saved to (null until a successful save). */
+  savedClientId: string | null;
+  /** Persist the current full-mode markdown report onto a client (cdd.ubo_reports). */
+  saveReport(clientId: string): void;
   /** Turn 1 — resolve a typed name to candidate entities (sets the run going). */
   start(args: { company: string; jurisdiction: string; depth: number; flags?: UboFlags }): void;
   /** Turn 2 — run the full investigation on the chosen candidate index. */
@@ -75,6 +84,8 @@ export function useUboInvestigation(opts?: {
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [choiceNonce, setChoiceNonce] = useState(0);
   const [autoIndex, setAutoIndex] = useState<number | null>(null);
+  const [saveState, setSaveState] = useState<UboSaveState>("idle");
+  const [savedClientId, setSavedClientId] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
   // Flags + seed chosen at start() are frozen for the lifetime of the conversation, so a
@@ -269,7 +280,39 @@ export function useUboInvestigation(opts?: {
   function start(args: { company: string; jurisdiction: string; depth: number; flags?: UboFlags }) {
     flagsRef.current = args.flags ?? DEFAULT_FLAGS;
     seedRef.current = { company: args.company, jurisdiction: args.jurisdiction, depth: args.depth };
+    // A fresh run arms the save button again (the prior report's "Saved" state is stale).
+    setSaveState("idle");
+    setSavedClientId(null);
     void resolve(args.company, args.jurisdiction, args.depth);
+  }
+
+  // Explicit "Save to profile": append the current full-mode markdown report onto a client.
+  function saveReport(clientId: string) {
+    const r = result;
+    if (!clientId || !r?.markdown?.trim()) return;
+    setSaveState("saving");
+    const at = nowIso();
+    const record: UboReportRecord = {
+      id: [r.conversationId, r.messageId].filter(Boolean).join(":") || at,
+      at,
+      company_name: r.header?.subject?.trim() || seedRef.current.company,
+      jurisdiction: r.header?.jurisdiction || seedRef.current.jurisdiction,
+      markdown: r.markdown,
+      header: r.header,
+      conversation_id: r.conversationId,
+      message_id: r.messageId,
+    };
+    // Full-mode reports carry no JSON verdict; use the header's "all clear" flag for the log row.
+    const risk_status = r.header?.clear === true ? "cleared" : "review";
+    void saveUboReport(clientId, record, {
+      at,
+      kind: "ubo",
+      risk_status,
+      note: `Ownership report saved: ${record.company_name}`,
+    }).then((res) => {
+      setSaveState(res.ok ? "saved" : "error");
+      if (res.ok) setSavedClientId(clientId);
+    });
   }
 
   function reset() {
@@ -281,6 +324,8 @@ export function useUboInvestigation(opts?: {
     setError(null);
     setCandidates([]);
     setConversationId(null);
+    setSaveState("idle");
+    setSavedClientId(null);
   }
 
   return {
@@ -291,6 +336,9 @@ export function useUboInvestigation(opts?: {
     error,
     candidates,
     choiceNonce,
+    saveState,
+    savedClientId,
+    saveReport: (clientId: string) => saveReport(clientId),
     start,
     selectCandidate: (index: number) => void investigate(index),
     searchAgain: (text: string) => void searchAgain(text),

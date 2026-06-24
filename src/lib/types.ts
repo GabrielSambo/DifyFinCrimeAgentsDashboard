@@ -5,6 +5,8 @@
   cannot resolve; the UI must degrade gracefully.
 */
 
+import type { UboReportHeader } from "./ubo-report";
+
 export type Confidence = "high" | "medium" | "low";
 export type ScreeningStatus = "no_match" | "match" | "candidate" | "error" | "skipped";
 
@@ -133,6 +135,26 @@ export interface CddHistoryEntry {
   note: string;
 }
 
+/**
+ * One saved full-mode ownership report (the analyst markdown narrative). Stored as an
+ * append-only array on cdd.ubo_reports so the profile keeps the full history of every run.
+ */
+export interface UboReportRecord {
+  /** Stable id for the run (conversation+message, or the saved-at timestamp). */
+  id: string;
+  /** ISO timestamp the report was saved. */
+  at: string;
+  /** Resolved subject/company name (from the report header, else the typed name). */
+  company_name: string;
+  jurisdiction?: string;
+  /** The full markdown report (progress lines already stripped). */
+  markdown: string;
+  /** Structured header strip (company number, LEI, status, screening counts). */
+  header?: UboReportHeader;
+  conversation_id?: string;
+  message_id?: string;
+}
+
 /** Namespaced enrichment persisted under customers.data.cdd (no schema change). */
 export interface Cdd {
   risk_status: "alert" | "review" | "cleared" | "pending";
@@ -143,6 +165,8 @@ export interface Cdd {
   screening?: { summary: ScreenSummary; results?: Array<Record<string, unknown>> };
   ubo?: UboPayload;
   ubo_resolved_name?: string;
+  /** Append-only history of saved full-mode ownership reports (newest first). */
+  ubo_reports?: UboReportRecord[];
   history: CddHistoryEntry[];
 }
 

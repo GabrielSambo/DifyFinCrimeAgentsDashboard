@@ -1,5 +1,5 @@
 import type { Confidence, ScreeningStatus } from "@/lib/types";
-import type { LightState } from "@/lib/documents";
+import { type LightState, type DocStatus, docPhase, DOC_PHASE_META } from "@/lib/documents";
 import { reviewStatus } from "@/lib/review";
 
 /* ---------- Derived review-due badge ---------- */
@@ -37,6 +37,27 @@ export function TrafficLight({ state, title }: { state: LightState; title?: stri
       title={title ? `${title}: ${state}` : state}
       className={`inline-block h-2.5 w-2.5 rounded-full ${s.dot} ${s.ring}`}
     />
+  );
+}
+
+/* ---------- Document-status phase pill ---------- */
+
+const PHASE_TONE: Record<"good" | "warn" | "bad" | "neutral", { bg: string; dot: string }> = {
+  good: { bg: "bg-good-bg text-good", dot: "bg-good" },
+  warn: { bg: "bg-warn-bg text-warn", dot: "bg-warn" },
+  bad: { bg: "bg-bad-bg text-bad", dot: "bg-bad" },
+  neutral: { bg: "bg-surface-2 text-ink-3", dot: "bg-ink-3" },
+};
+
+/** The portfolio's headline status: one of Validated / Pending / Requested / No documents. */
+export function DocStatusBadge({ ds }: { ds?: DocStatus | null }) {
+  const { label, tone } = DOC_PHASE_META[docPhase(ds)];
+  const s = PHASE_TONE[tone];
+  return (
+    <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium ${s.bg}`}>
+      <span className={`h-1.5 w-1.5 rounded-full ${s.dot}`} />
+      {label}
+    </span>
   );
 }
 

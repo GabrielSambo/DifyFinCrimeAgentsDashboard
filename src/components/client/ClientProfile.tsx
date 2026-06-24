@@ -2,8 +2,10 @@
 
 import { useState } from "react";
 import { RISK_META, type Client } from "@/lib/clients";
+import type { UboReportRecord } from "@/lib/types";
 import { normalizeUboPayload } from "@/lib/ubo-normalize";
 import { UboResults } from "@/components/ubo/UboResults";
+import { UboReport } from "@/components/ubo/UboReport";
 import { SectionCard, Stat, Spinner } from "@/components/ui/atoms";
 import { persistCdd } from "@/lib/persist-client";
 import { formatDate } from "@/lib/format";
@@ -222,6 +224,42 @@ function ScreeningCard({ client }: { client: Client }) {
   );
 }
 
+/** Saved full-mode ownership reports — collapsed preview rows that expand to the full markdown. */
+function UboReportsCard({ reports }: { reports: UboReportRecord[] }) {
+  const [openId, setOpenId] = useState<string | null>(reports[0]?.id ?? null);
+  return (
+    <SectionCard title="Beneficial-ownership reports" subtitle={`${reports.length} saved · newest first`}>
+      <ul className="space-y-2">
+        {reports.map((r) => {
+          const open = openId === r.id;
+          return (
+            <li key={r.id} className="overflow-hidden rounded-lg border border-border">
+              <button
+                onClick={() => setOpenId(open ? null : r.id)}
+                className="flex w-full items-center gap-3 px-3.5 py-2.5 text-left hover:bg-surface-2/60"
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" className={`shrink-0 text-ink-3 transition-transform ${open ? "rotate-90" : ""}`}>
+                  <path d="M9 6l6 6-6 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+                <span className="truncate text-sm font-medium text-ink">{r.company_name}</span>
+                {r.header?.status && (
+                  <span className="rounded bg-surface-2 px-1.5 py-0.5 text-[11px] font-medium text-ink-3">{r.header.status}</span>
+                )}
+                <span className="ml-auto shrink-0 text-xs text-ink-3">{r.at?.slice(0, 10)}</span>
+              </button>
+              {open && (
+                <div className="border-t border-border px-3.5 py-3">
+                  <UboReport markdown={r.markdown} header={r.header ?? {}} />
+                </div>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+    </SectionCard>
+  );
+}
+
 export function ClientProfile({
   client,
   onInvestigate,
@@ -278,6 +316,11 @@ export function ClientProfile({
           </p>
         )}
       </SectionCard>
+
+      {/* Saved full-mode ownership reports (newest first) */}
+      {client.cdd?.ubo_reports?.length ? (
+        <UboReportsCard reports={client.cdd.ubo_reports} />
+      ) : null}
 
       {/* History */}
       {client.cdd?.history?.length ? (
