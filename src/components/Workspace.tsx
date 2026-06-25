@@ -25,11 +25,6 @@ const KYC_GROUP_ICON = (
 );
 const KYC_CHILDREN: NavItem[] = [
   {
-    id: "onboarding",
-    label: "Chat",
-    icon: <path d="M21 11.5a8.38 8.38 0 01-.9 3.8 8.5 8.5 0 01-7.6 4.7 8.38 8.38 0 01-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 01-.9-3.8 8.5 8.5 0 014.7-7.6 8.38 8.38 0 013.8-.9h.5a8.48 8.48 0 018 8v.5z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />,
-  },
-  {
     id: "ownership",
     label: "UBO Ownership",
     icon: <path d="M12 3v4M5 21v-4a2 2 0 012-2h10a2 2 0 012 2v4M5 21h4M15 21h4M10 7h4v3h-4V7zM3 17h4v4H3v-4zM17 17h4v4h-4v-4z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />,
@@ -39,11 +34,16 @@ const KYC_CHILDREN: NavItem[] = [
     label: "Remediation",
     icon: <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10zM9 12l2 2 4-4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />,
   },
+  {
+    id: "onboarding",
+    label: "KYC Copilot",
+    icon: <path d="M21 11.5a8.38 8.38 0 01-.9 3.8 8.5 8.5 0 01-7.6 4.7 8.38 8.38 0 01-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 01-.9-3.8 8.5 8.5 0 014.7-7.6 8.38 8.38 0 013.8-.9h.5a8.48 8.48 0 018 8v.5z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />,
+  },
 ];
 
 const TITLES: Record<Tab, { title: string; subtitle: string }> = {
   dashboard: { title: "Dashboard", subtitle: "Client portfolio & document status" },
-  onboarding: { title: "Chat", subtitle: "Onboard new clients & review existing ones via the KYC assistant" },
+  onboarding: { title: "KYC Copilot", subtitle: "Onboard new clients & review existing ones via the KYC copilot" },
   profile: { title: "Client Profile", subtitle: "Consolidated due-diligence record" },
   ownership: { title: "UBO Ownership", subtitle: "Beneficial-ownership tracing" },
   remediation: { title: "Remediation", subtitle: "Document remediation & ongoing monitoring" },

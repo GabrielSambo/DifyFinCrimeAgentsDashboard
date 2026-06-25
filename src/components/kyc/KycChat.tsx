@@ -227,8 +227,19 @@ export function KycChat() {
           const showInteractive = isLastAssistant && !!env;
           const options = showInteractive ? env!.ui.options ?? [] : [];
           const fields = showInteractive ? env!.ui.fields ?? [] : [];
-          // Gate documents to the current turn too (was rendering on every past bubble).
-          const documents = showInteractive ? env!.ui.documents ?? [] : [];
+          // Step 3 ("collecting"): the agent's `speak` IS the full fillable template, with a
+          // "Required Documents" list baked in — it duplicates the interactive form + checklist
+          // below it. While collecting, show only the opening instruction line in the bubble and
+          // hide the documents checklist; the fill-in form is the sole UI. The final summary
+          // carries no envelope, so the template + required documents still appear at the end.
+          const isCollecting = env?.phase === "collecting";
+          // Gate documents to the current turn (was rendering on every past bubble), and hide them
+          // entirely while collecting — required documents belong in the final summary.
+          const documents = showInteractive && !isCollecting ? env!.ui.documents ?? [] : [];
+          // Strip the leaked template/docs prose down to its opening instruction line while collecting.
+          const bubbleText = isCollecting
+            ? (m.text.split("\n").map((l) => l.trim()).find(Boolean) ?? "")
+            : m.text;
           return (
             <div key={i} className={m.role === "user" ? "flex justify-end" : "flex justify-start"}>
               <div className="max-w-[88%]">
@@ -249,8 +260,8 @@ export function KycChat() {
                       : "rounded-2xl rounded-bl-sm border border-border bg-surface px-4 py-2.5 text-sm leading-relaxed text-ink"
                   }
                 >
-                  {m.text ? (
-                    <Markdown text={m.text} />
+                  {bubbleText ? (
+                    <Markdown text={bubbleText} />
                   ) : (
                     <div className="flex items-center gap-2">
                       <TypingDots />
