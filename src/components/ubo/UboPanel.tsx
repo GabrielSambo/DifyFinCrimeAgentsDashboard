@@ -18,11 +18,13 @@ const JURISDICTIONS = [
   "France",
   "Ireland",
   "Luxembourg",
+  "Gibraltar",
 ];
 
 const EXAMPLES = [
   { company: "ALDI STORES LIMITED", jurisdiction: "United Kingdom" },
   { company: "BREWDOG PLC", jurisdiction: "United Kingdom" },
+  { company: "Insight Tech Limited", jurisdiction: "Gibraltar" },
 ];
 
 export interface UboPrefill {
