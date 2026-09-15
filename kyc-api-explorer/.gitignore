@@ -1,0 +1,4 @@
+# local credential overrides — never commit real keys
+.env
+__pycache__/
+*.pyc
