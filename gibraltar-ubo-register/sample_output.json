@@ -1,0 +1,35 @@
+{
+  "query": "Bland",
+  "found": true,
+  "companies": [
+    {
+      "name": "BLAND LIMITED",
+      "eicn": "03044",
+      "beneficial_owners": [
+        {
+          "name": "GUY CHRISTOPHER STAGNETTO Occupation: Director",
+          "type": "entity",
+          "date_of_birth": null,
+          "occupation": "Director",
+          "nationality": null,
+          "residence": "Gibraltar",
+          "status": "Active",
+          "voting_rights_pct": 0.0,
+          "shares_pct": 0.0
+        },
+        {
+          "name": "STEPHEN JOHN HARLOW Occupation: Director",
+          "type": "entity",
+          "date_of_birth": null,
+          "occupation": "Director",
+          "nationality": null,
+          "residence": "-",
+          "status": "Active",
+          "voting_rights_pct": 0.0,
+          "shares_pct": 0.0
+        }
+      ],
+      "snapshot_date": "15/Sep/2026 14:48:06"
+    }
+  ]
+}
